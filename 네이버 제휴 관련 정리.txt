@@ -1,0 +1,104 @@
+	
+	
+	
+	네이버 인증키
+	
+	AccessLicense 	: 01000100006a5f8870702f4e09a9f652f9fd4733e4bc0f7401fdca9320a634a165b9c0c50d 
+	SecretKey 		: AQABAACskpJLO6va35H0iicSMbbrmdQu7mT7usqibDJmQ5r6Cw==
+	
+	
+	
+	상품 API에서 SANDBOX/PRODUCTION 환경에 따라 사용하는 호스트 정보는 다음과 같다.
+	• SANDBOX: http://sandbox.api.naver.com/ShopN/[ServiceName]
+	• PRODUCTION: http://ec.api.naver.com/ShopN/[ServiceName]
+	
+	[ServiceName]에는 "상품 API"의 Service Name 항목 값을 입력한다. 예를 들어 PRODUCTION
+	환경에서 ManageProduct API를 호출하려면 http://ec.api.naver.com/ShopN/ProductService를
+	사용한다.
+	
+	
+	
+	HTTP 프로토콜을 통해 이미지를 업로드할 때 이미지 업로드 API에서 SANDBOX/PRODUCTION
+	환경에 따라 사용하는 호스트 정보는 다음과 같다.
+	• SANDBOX: http://alpha.openapi.shop.naver.com:19609/service/UploadImageList
+	• PRODUCTION: http://openapi.shop.naver.com/service/UploadImageList
+
+
+
+
+	주문 API에서 SANDBOX/PRODUCTION 환경에 따라 사용하는 호스트 정보는 다음과 같다.
+	• SANDBOX: http://sandbox.api.naver.com/ShopN/[ServiceName]
+	• PRODUCTION: http://ec.api.naver.com/ShopN/[ServiceName]
+	
+	[ServiceName]에는 주문 API 버전에 따라 다음과 같은 값을 입력한다.
+	• API 4.0: SellerService4
+	• API 4.1: SellerService41
+	
+	
+	
+	• 문의 내역 조회
+	• 문의 답변 및 수정
+	주문 API에서 SANDBOX/PRODUCTION 환경에 따라 사용하는 호스트 정보는 다음과 같다.
+	• SANDBOX: http://sandbox.api.naver.com/ShopN/CustomerInquiryService
+	• PRODUCTION: http://ec.api.naver.com/ShopN/CustomerInquiryService
+	
+	
+	
+	네이버 플랫폼 서비스 Programming Guide
+	
+	
+	
+	
+	==============================================================================================================================================
+	
+	
+	오류코드
+	
+	ERR-COMMON-000101			요청 메시지의 필드 값이 잘못되거나 필수 필드의 값이 없을 경우, 불필요한 데이터가 들어갔을 때 발생하는 오류
+	ERR-COMMON-000102			요청 메시지의 암호화가 필요한 필드가 암호화가 안되어있거나, 암호화가 잘못되어 복호화가 정상적으로 되지 않을 경우 발생하는 오류
+	ERR-COMMON-000103 			요청 메시지에 AccessCredentials 이 없거나, 형식이 잘못됐을 때 발생하는 오류
+	ERR-COMMON-000201 			시스템 오류로 요청 메시지가 처리되지 않았을 때 발생하는 오류
+	
+	ERR-COMMON-000301 ~ 
+	ERR-COMMON-000306			부정 접근이 의심되어 접근이 차단되었을 때 발생하는 오류
+	
+	ERR-COMMON-000401 ~
+	ERR-COMMON-000408			AccessLicense 가 잘못되어 접근이 차단되었을 때 발생하는 오류
+	
+	ERR-COMMON-000409 ~
+	ERR-COMMON-000410			AccessLicense 가 만료 또는 폐기되어 접근이 차단되었을 때 발생하는 오류
+	
+	ERR-COMMON-000411 ~
+	ERR-COMMON-000412			메시지 서명 검증에 실패하여 접근이 차단되었을 때 발생하는 오류
+	
+	ERR-COMMON-000413 			허용되지 않는 도메인이어서 접근이 차단되었을 때 발생하는 오류
+	
+	ERR-COMMON-000414 ~
+	ERR-COMMON-000415			인증에 실패하여 접근이 차단되었을 때 발생하는 오류
+	
+	ERR-COMMON-000501 			쿼터 잔량이 부족하여 요청을 처리할 수 없을 때 발생하는 오류
+	ERR-COMMON-000502 			쿼터 기간이 만료되어 요청을 처리할 수 없을 때 발생하는 오류
+
+	---------------------------------------------------------------------------------------------------------------------------------------------------
+	
+	
+	경고 코드
+	
+	WARN-COMMON-000001 			해당 접근 라이선스의 쿼터가 곧 소진될 가능성이 있을 때 발생하는 경고.
+	WARN-COMMON-000002 			서비스 처리 후 해당 접근 라이선스의 쿼터가 남아있지 않을 때 발생하는 경고.
+	WARN-COMMON-000003			서비스 처리 후 해당 접근 라이선스의 쿼터 차감 중 오류가 발생했을 때 발생하는 경고.
+	
+	
+	 
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	

@@ -1,0 +1,142 @@
+NS 물류
+
+	Lo Amptn Table
+	
+	1. 입금확인
+	2. 결제완료
+	3. 출고지시
+	4. 출고확정
+	5. 출고완료
+	6. 배송지시
+	7. 배송완료
+	
+	RC 테이블에 진행 단계별로 데이터 Row가 쌓인다.
+	
+	이 테이블에서 배송지시, 배송완료 상태인 데이터를 수집한다.
+	
+	DTM 에 조회 요청 (selectLoAfltDlvrInfoInf 쿼리)
+	/apis/api/legacy/etc/selectLoAfltDlvrInfoInf
+	
+	쿼리 내용
+	----------------------------------------------------------------------------------------------------------------------------------------------------------
+	SELECT A.OUTGO_GTHR_NUM
+                 , A.ORDER_NUM
+                 , A.ORDER_SEQ
+                 , A.OUTGO_CMD_SEQ
+                 , A.OUTGO_GTHR_SPR_CD
+                 , A.DLVR_TYPE_CD
+                 , A.RELT_STAT_CD
+                 , A.LSC_CD
+                 /* 티몬의 경우 예외사항 :: 추가송장등록 API 가 존재하기 때문에 주문에 따른 송장번호가 있어야함 */
+                 , CASE 
+                        WHEN B.OTSD_IN_PATH IN ('217','208') THEN REPLACE(REPLACE(REPLACE(A.WBL_NUM,CHR(0),''),' ',''),'-','')        
+                        ELSE FIRST_VALUE(REPLACE(REPLACE(REPLACE(A.WBL_NUM,CHR(0),''),' ',''),'-','')) OVER (PARTITION BY A.ORDER_NUM, B.GOODS_CD ORDER BY A.INIT_REGI_DTTM ASC, A.ORDER_SEQ ASC)
+                    END AS WBL_NUM
+                 , A.DLVR_ENT_STAT_CD
+                 , B.OTSD_IN_PATH
+          FROM NSMAIN.LO_AFLT_DLVR_INFO_INF A , NSMAIN.OR_ORDER_DTL B
+         WHERE A.ORDER_NUM = B.ORDER_NUM
+            AND A.ORDER_SEQ = B.ORDER_SEQ
+            AND A.FINAL_RVIS_DTTM BETWEEN TO_DATE(#{fromDateCnt},'YYYY-MM-DD HH24:MI:SS') AND TO_DATE(#{toDateCnt},'YYYY-MM-DD HH24:MI:SS')
+            AND A.INTLC_STAT_CD = '200'
+            AND A.WBL_NUM IS NOT NULL
+            AND B.GIFT_YN != 'Y'
+            AND B.OTSD_IN_PATH IN (
+                                              '903'      /* COUPANG  */
+                                              , '904'    /* GMK         */
+                                              , '924'    /* GMK_ETV   */
+                                              , '988'    /* G9            */
+                                              , '908'    /* AUC          */ 
+                                              , '215'    /* AUC_ETV    */
+                                              , '906'    /* ST11         */
+                                              , '213'    /* ST11_ETV   */
+                                              , '907'    /* AK            */
+                                              , '217'    /* TMON       */
+                                              , '208'    /* TMON_ETV */
+                                              , '218'    /* INTERPARK */
+                                              ) 
+	----------------------------------------------------------------------------------------------------------------------------------------------------------
+
+	INTLC_STAT_CD 가 200으로 값을 넣어주기 때문에, 200 상태인 값을 찾아온다.
+	
+	BATCH를 통해 10분 마다 배송데이터를 조회해오는데, 
+	배치 실행시간동안 빠지는 데이터를 막기 위해 20분 전 데이터부터 조회한다.
+	
+	SpLoAmPtnDlvrInfoSetServiceImpl(제휴사 주문 배송정보 처리)
+	에서 미연동 대상 조회 프로세스에서 이 값을 조회하게 된다.
+	
+	
+	DTM 요청을 통해 출고수거기본 조회 쿼리를 실행
+	/apis/api/legacy/etc/selectLoOutgoGthrBas
+	
+	EBAY의 경우, 수기로 배송완료 처리한 주문에 대해 
+	다른 주문들처럼 발송처리가 아닌 배송완료 상태로 처리한다.
+	
+	
+	
+	
+	발송처리 로직이 성공적으로 수행될 경우, 200으로 등록된 INTLC_STAT_CD 값을 100으로, 실패시 300으로 수정한다.
+	
+		** 실패시 300으로 처리하지만, 이 데이터에 다시 접근하여 처리하는 로직은 없다.
+		RC쪽 데이터라 우리쪽에서 처리할 방법이 없기 때문에, 300인 데이터가 들어가지 않도록 주의
+		
+		만약 300으로 들어가는 데이터 발생 시 운영팀에 통보하여 수정조치가 필요하다.
+		이 때, 수집을 위한 쿼리는 날짜로 조회하는 방식이기 때문에 
+	
+		실패 데이터가 확인되면, 해당 날짜까지 조회하는 배치 실행을 통해 데이터를 수정해야 한다.
+		
+		
+	성공 후 Shippingcmplt 값을 30에서 31로 update 한다.
+	
+	Service 쪽에서 네이버 API 전문 작성에 필요한 데이터를 확실하게 전달하도록 설정
+	전달받은 값을 통해 전문을 생성하고 전송한다.
+	API 호출 결과인 RES 값을 토대로(성공/실패) 후처리를 진행한다.
+	
+	최종 성공일 경우 32, 실패인 경우 39로 update 한다.
+	
+	
+	상태코드 작성규칙은 십의 자리가 업무 구분, 일의 단위가 상태 구분으로
+	
+	10은 상품, 20은 주문, 30은 배송 등 이다.
+	
+	0은 대기, 1은 진행중, 2는 성공, 9는 실패이다.
+	
+	
+	
+	
+	
+	추가사항
+		ShippingCmpltJob에서 COMPLETE_SHIPPING 타입으로 설정한 OutboundApiRequestVo를 request() 실행하면 
+		
+		CompleteApiServerServiceImpl.java (확정배치) 의 @Path("/shipping/{partnerName}") 경로를 타고 들어온다.
+		설정된 PartnerType 에 따라 각 파트너별 ShippingCmpltService 의 requestShippingCmplt() 메소드를 수행하여 Outbound 처리된다.
+		
+		
+		SpLoAmPtnDlvrInfoSetServiceImpl 에서 
+			ETC_SELECT_LO_AFLT_DLVR_INFO_INF	- selectLoAfltDlvrInfoInf
+			ETC_SELECT_LO_OUTGO_GTHR_BAS		- selectLoOutgoGthrBas
+			ETC_SELECT_LO_OUTGO_GTHR_HST		- selectLoOutgoGthrHst
+			ETC_UPDATE_LO_AFLT_DLVR_INFO_INF	- updateLoAfltDlvrInfoInf
+		의 4종류로 설정한 DTM API 형식의 호출은 DTM의 EtcApiServiceImpl에서 
+		DtmApiRequestVo에 정의된 각각의 메소드를 호출하여 실행한다. (위의 우측에 표기한 메소드)
+			
+	
+	
+	
+	
+	
+	쿼리의 PagingPrefix, PagingSuffix 등 공통 삽입형 쿼리들은 nsm-aff-comm 패키지의 Reference.xml 에서 찾을 수 있다.
+	
+	NSDBAPTN.MD_PTN_GOODS_BAS 에서 PTN_CD 코드의 네이버 코드 값은 220
+		
+		
+		
+		
+		
+		
+	
+		
+	
+	
+	
+	

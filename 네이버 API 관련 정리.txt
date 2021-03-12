@@ -1,0 +1,149 @@
+	
+
+
+	API 통신 테스트
+		
+		파라미터가 없는 API 통신 테스트로 수행하자
+
+		 SANDBOX: http://sandbox.api.naver.com/ShopN/[ServiceName]
+
+		GetChangedProductOrderList 
+			- 변경 상품 주문 내역을 조회
+
+			필드명 					타입 				필수 여부 			설명 
+									ListRequest 	필수 				기본 목록 요청 메시지 구조체
+			LastChangedStatusCode 	code 			선택 				최종 상품 주문 상태 코드("A.2.2 상품 주문 변경 상태 코드" 참고)
+			MallID 					string 			선택 				판매자 아이디
+
+
+
+		발주 처리 
+			PlaceProductOrder
+			
+		발송 지연 처리
+			DelayProductOrder
+			
+		** 발송 처리
+			ShipProductOrder
+				- 특정 상품 주문을 발송 처리한다.
+				
+				
+				Request Message
+					<ShipProductOrderRequest> 
+						<AccessCredentials> AccessCredentialsType
+							<AccessLicense> string </AccessLicense> 
+							<Timestamp> dateTime </Timestamp> 
+							<Signature> string </Signature> 
+						</AccessCredentials>
+						<RequestID> string </RequestID>
+						<DetailLevel> string </DetailLevel>
+						<Version> string </Version>
+						<ProductOrderID> string </ProductOrderID>
+						<DeliveryMethodCode> code </DeliveryMethodCode>
+						<DeliveryCompanyCode> string </DeliveryCompanyCode>
+						<TrackingNumber> string </TrackingNumber>
+						<DispatchDate> dateTime </DispatchDate>
+						<BarcodeNoList> string[] </BarcodeNoList>
+						<ECouponNo> dateTime </ECouponNo>
+					</ShipProductOrderRequest>
+				
+				BaseRequest				- SOAP 메시지 구조체. 요청 API의 가장 기본적인 정보로 구성
+					필드명 					타입 						필수 여부 			설명 
+					AccessCredentials 		AccessCredentialsType 	필수 				인증 및 권한 확인을 위해 요청 메시지에 반드시 첨부되어야 한다.
+					RequestID 				string 					선택 				메시지를 식별하기 위한 아이디로, 필요에 따라 사용한다. 
+																					사용하면 동일한 필드 값이 응답 메시지에도 포함된다. 
+																					영문 및 숫자로 구성하며, 최대 64 글자를 입력할 수 있다.
+				
+				BaseCheckoutRequest 	- 기본 메시지 구조체 부분
+					필드명 					타입 						필수 여부 			설명 
+					DetailLevel 			string 					선택 				돌려 받는 데이터의 상세 정도(Compact/Full). 
+																					기본값은 "Full"이다.
+					Version 				string 					필수 				API 버전(4.1)
+				
+					필드명 					타입 						필수 여부 			설명 
+					ProductOrderID 			string 					필수 				상품 주문 번호
+					DeliveryMethodCode 		code 					필수 				배송 방법 코드("A.2.9 배송 방법 코드" 참고)
+					DeliveryCompanyCode 	string 					선택 				택배사 코드("A.2.10 택배사 코드" 참고)
+					TrackingNumber 			string 					선택 				송장 번호
+					DispatchDate 			dateTime 				필수 				배송일
+					BarcodeNoList 			string[] 				선택 				바코드 번호
+					ECouponNo 				string 					선택 				E 쿠폰 번호
+			
+			
+				Response Message
+					<ShipProductOrderResponse> 
+						<RequestID> string </RequestID> 
+						<ResponseType> string </ResponseType>
+						<ResponseTime> int </ResponseTime>
+						<Error> ErrorType </Error> 
+						<WarningList> ErrorType[] </WarningList> 
+						<DetailLevel> string </DetailLevel> 
+						<Version> string </Version> 
+						<Release> string </Release> 
+						<Timestamp> dateTime </Timestamp> 
+						<MessageID> string </MessageID> 
+					</ShipProductOrderResponse>
+			
+				
+					필드명 		타입 						필수 여부 			설명 
+								BaseCheckoutResponse 	필수 				기본 응답 메시지 구조체
+			
+			
+		* 재발송 처리
+			ReDeliveryExchange
+			
+			
+		주문 번호에 포함된 상품 주문번호 조회
+			GetProductOrderIDList
+			
+		
+		InquiryExtraData
+			주문 API는 조회 조건으로 일시를 사용
+			
+			같은 일시에 해당하는 데이터가 두 개 이상 존재할  수 있기 때문에
+			조회의 조건을 보다 구체적으로 제한하기 위해 사용한다.
+			
+			HasMoreData 값이 true 일 경우 응답목록 외에 요청한 조회 기간에 해당하는
+			데이터가 더 존재한다는 의미
+			
+			한번 조회할 때, 1000개의 데이터를 읽어들이므로
+			1001개 이상의 데이터가 조회될 경우, HasMoreData 값이 true 가 되고
+			InquiryExtraData 에 1001번째 상품 주문 번호가 표시된다.
+			
+			이어서 목록을 요청할 때에는 InquiryExtraData 에 앞서 실행한 조회 API 반환값 중 
+			InquiryExtraData 값을 그대로 담아 요청하면 1001번째 데이터부터 이어서 조회할 수 있다.
+			
+			
+			
+		A.2.2 상품 주문 변경 상태 코드
+		코드 값 						설명 
+		PAY_WAITING 				결제 대기
+		PAYED 						결제 완료
+		DISPATCHED 					발송 처리
+		CANCEL_REQUESTED 			취소 요청
+		RETURN_REQUESTED 			반품 요청
+		EXCHANGE_REQUESTED 			교환 요청
+		EXCHANGE_REDELIVERY_READY 	교환 재배송 준비
+		HOLDBACK_REQUESTED 			구매 확정 보류 요청
+		CANCELED 					취소
+		RETURNED 					반품
+		EXCHANGED 					교환
+		PURCHASE_DECIDED 			구매 확정
+		
+		
+		
+		
+		
+	NaverApiClientProvider.java
+	
+		네이버 API 호출을 위한 객체
+		
+		RestfulApiClient 에서 request(파트너RequestVo) 를 실행하면 해당하는 파트너 타입의 파트너ApiClientProvider 에서
+		API 통신 형식에 맞추어 설정한다.
+		
+		NaverApiClientProvider 에서는 
+			1) 
+		
+		
+		
+		

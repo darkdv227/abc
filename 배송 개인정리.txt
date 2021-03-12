@@ -1,0 +1,1545 @@
+	
+	전체적인 흐름 
+		상수
+			BaseConstants 쪽에서 상수를 설정하고 그 값을 불러와서 사용하도록
+			상수값을 직접 입력하면 추후 변경 작업이 있을 시 어려움이 많으며, SonarLint 품질검수 쪽에서도 좋지 않다.
+			
+			날짜 포맷의 경우, BastConstants, DateUtil 등을 통해 설정하는 것이 좋다.
+			
+			
+			/* 배송 */
+			public static final String STAT_SHIP_READY 	= "30";		배송대기
+			public static final String STAT_SHIP_ING 	= "31";		배송중
+			public static final String STAT_SHIP_CMPLT 	= "32";		배송완료
+			public static final String STAT_SHIP_FAIL 	= "39";		배송실패
+			
+			
+			/* 출고완료/배송완료 구분코드 */
+			public static final String SALE_CNFM_CD_10 = "10";		출고완료
+			public static final String SALE_CNFM_CD_20 = "20";		배송완료
+			
+			
+			/* 관련상태코드 */
+			public static final String RELT_STAT_CD_100 = "100"; //주문접수
+			public static final String RELT_STAT_CD_110 = "110"; //입금확인				주문자가 결제를 했을 때
+			public static final String RELT_STAT_CD_120 = "120"; //출고지시				운송장 없음
+			public static final String RELT_STAT_CD_130 = "130"; //출고확정				운송장 생성
+			public static final String RELT_STAT_CD_140 = "140"; //출고완료				
+			public static final String RELT_STAT_CD_150 = "150"; //배송완료
+			public static final String RELT_STAT_CD_199 = "199"; //배송완료
+			
+			
+			/* 택배 업체 상태 코드(DLVR_ENT_STAT_CD) */
+			dlvrEntStatCd = 11		택배사 입고
+			dlvrEntStatCd = 15		택배원 출고
+			dlvrEntStatCd = 20		배달완료
+	
+		배치리스트 
+			batch-context-quartz.xml
+			쿼츠 파일안에 배치가 정의되어 있다.
+			필요 파라미터에 관한 정보도 정의되어 있다. 
+				- gbn은 제휴사 관련 구분 코드
+				- goodsCd는 ns 관리 상품 코드
+				- checkBatchId는 같이 돌면 안되는 배치 아이디를 식별한다. 해당 배치가 돌고 있으면 돌아가지 않도록 체크하는 용도(복수가능)
+				
+			DTM은 백엔드 데이터로, RC쪽 데이터이다.
+	
+	상품 수집 배치 (시작)
+		- spLoAmPtnDlvrInfoSetBatchJob
+			쿼츠에 spLoAmPtnDlvrInfoSetBatchJob로 등록
+			
+			jobGroup 	: 제휴사 구분을 위한 그룹 구분용, 배송쪽은 동일 로직을 수행하므로 COMMON으로 설정
+			fromDateCnt	: 조회 시작 날짜, value의 1은 10분 단위로 새는 데이터를 방지하기 위해 2주기인 20분 전부터 조회하도록 되어있다.
+			toDateCnt	: 조회 종료 날짜, value는 0으로 현재 시간이다.
+			
+			
+			
+			SpLoAmPtnDlvrInfoSetJob.java 에서 Execute 한다.
+			
+			TodateCnt, FromDateCnt를 설정하고 spLoAmPtnDlvrInfoSet() 프로세스를 수행
+		
+	
+	SpLoAmPtnDlvrInfoSetServiceImpl
+
+		INTLCSTATCD			연동 상태값
+							RC 쪽에서 200으로 넣어주는 데이터로 추정, 프로세스 수행 후 update
+								- SUCCESS 	: 100
+								- FAIL		: 300
+		PTNDLVENTCD			배송 상태
+								- 출고완료		: 10
+								- 배송완료		: 20
+
+		제휴사 자체배송 코드
+							쿠팡 		: DIRECT
+							11번가	: 00099
+							AK몰		: 27
+							지마켓		: 10032
+							옥션		: 10070
+							티몬		: 10099
+							인터파크	: 169316
+							네이버		: CH1
+
+		outgoGthrNum		출고 수거 번호
+		orderNum			주문 번호
+		orderSeq			주문 순번
+		outgoCmdSeq			출고 지시 순번
+		outgoGthrSprCd		출고수거 구분코드
+		*reltStatCd			*관련 상태 코드		- 메인으로 봐야하는 주요 코드
+		lscCd				택배사 코드
+		wblNum				운송장 번호
+		dlvrEntStatCd		택배업체 상태코드
+		dlvrCmpltFlag		배송완료 flag
+
+	
+		1. spLoAmPtnDlvrInfoSet
+			RestfulApiClientAdapter를 RestfulServiceType.DTM 로 설정한 RestfulApiClient를 세팅
+			
+		1-1.	DtmApiRequestVo를 ServiceType.ETC_SELECT_LO_AFLT_DLVR_INFO_INF(연동 상태 코드가 미연동) 로 설정
+				DtmApiRequestVo에 toDateCnt, fromDateCnt 를 설정하고 RestfulApiClient에 세팅하여 DTM에 request 호출
+				호출 결과를 JsonObject로 반환
+				
+					<select id="selectLoAfltDlvrInfoInf" parameterType="com.nsmall.partner.dtm.biz.legacy.entity.LoInfBasParamVo" resultType="com.nsmall.partner.dtm.api.server.legacy.entity.LoAfltDlvrInfoInfApiResponseVo">
+						 /* com.nsmall.partner.dtm.biz.legacy.dao.rc.LoAfltDlvrInfoInfRcMapper.selectLoAfltDlvrInfoInf */  
+						 SELECT A.OUTGO_GTHR_NUM
+								 , A.ORDER_NUM
+								 , A.ORDER_SEQ
+								 , A.OUTGO_CMD_SEQ
+								 , A.OUTGO_GTHR_SPR_CD
+								 , A.DLVR_TYPE_CD
+								 , A.RELT_STAT_CD
+								 , A.LSC_CD
+								 /* 티몬의 경우 예외사항 :: 추가송장등록 API 가 존재하기 때문에 주문에 따른 송장번호가 있어야함 */
+								 , CASE 
+										WHEN B.OTSD_IN_PATH IN ('217','208') THEN REPLACE(REPLACE(REPLACE(A.WBL_NUM,CHR(0),''),' ',''),'-','')        
+										ELSE FIRST_VALUE(REPLACE(REPLACE(REPLACE(A.WBL_NUM,CHR(0),''),' ',''),'-','')) OVER (PARTITION BY A.ORDER_NUM, B.GOODS_CD ORDER BY A.INIT_REGI_DTTM ASC, A.ORDER_SEQ ASC)
+									END AS WBL_NUM
+								 , A.DLVR_ENT_STAT_CD
+								 , B.OTSD_IN_PATH
+						  FROM NSMAIN.LO_AFLT_DLVR_INFO_INF A , NSMAIN.OR_ORDER_DTL B
+						 WHERE A.ORDER_NUM = B.ORDER_NUM
+							AND A.ORDER_SEQ = B.ORDER_SEQ
+							AND A.FINAL_RVIS_DTTM BETWEEN TO_DATE(#{fromDateCnt},'YYYY-MM-DD HH24:MI:SS') AND TO_DATE(#{toDateCnt},'YYYY-MM-DD HH24:MI:SS')
+							AND A.INTLC_STAT_CD = '200'
+							AND A.WBL_NUM IS NOT NULL
+							AND B.GIFT_YN != 'Y'
+							AND B.OTSD_IN_PATH IN (
+															  '903'      /* COUPANG  */
+															  , '904'    /* GMK         */
+															  , '924'    /* GMK_ETV   */
+															  , '988'    /* G9            */
+															  , '908'    /* AUC          */ 
+															  , '215'    /* AUC_ETV    */
+															  , '906'    /* ST11         */
+															  , '213'    /* ST11_ETV   */
+															  , '907'    /* AK            */
+															  , '217'    /* TMON       */
+															  , '208'    /* TMON_ETV */
+															  , '218'    /* INTERPARK */
+														>>    , '219'    /* NAVER   TODO-JS: 20210308 네이버 제휴사 코드 예정*/
+														>>	  , '220'    /* NAVER_ETV   TODO-JS: 20210308 네이버 ETV 제휴사 코드 예정*/ 
+															  ) 
+					</select>
+			
+		1-2.	selectDlvrCmpltOrdId 쿼리 실행 결과로 배송완료주문리스트 조회
+		
+				<select id="selectDlvrCmpltOrdId" resultType="Long">
+					/*com.nsmall.partner.batch.biz.common.dao.SpLoAmPtnDlvrInfoSetRoMapper.selectDlvrCmpltOrdId*/
+						SELECT A.ORD_ID
+						 FROM NSDBAPTN.MD_PTN_EBAY_DLVR_DTL A
+						WHERE A.LINK_DATE >= TO_CHAR(CURRENT_TIMESTAMP + '-1 MONTHS','YYYYMMDD')
+						   AND A.ORD_STAT_CD = '10'
+						   AND A.DELIVERY_COMPANY_CODE IN ('10032','10070')
+						   AND A.NS_LINK_STAT_CD = '32'
+						   AND NOT EXISTS (SELECT 1
+													FROM NSDBAPTN.MD_PTN_EBAY_DLVR_DTL B
+												   WHERE A.ORDPRDSEQ = B.ORDPRDSEQ
+													  AND B.ORD_STAT_CD = '20'
+													  AND B.DELIVERY_COMPANY_CODE IN ('10032','10070'))
+						   AND NOT EXISTS (SELECT 1
+													FROM NSDBAPTN.MD_PTN_MANUL_CANC_DTL D
+												   WHERE A.ORD_ID = D.ORDER_NUM
+													  AND D.REQ_SPR != '70')
+					   GROUP BY ORD_ID
+				</select>
+			
+		1-3.	DtmApiRequestVo를 ServiceType.ETC_SELECT_LO_OUTGO_GTHR_BAS로 설정
+				fromDateCnt, reltNumList(배송완료주문리스트) 를 세팅하여 DTM에 request 호출
+			
+		1-4.	연동 상태 코드가 미연동인 대상 조회와 출고수거 기본조회 DTM 호출 결과
+				호출 실패가 떨어졌을 경우, 실패 대상을 message에 담는다.
+				한 가지라도 호출에 실패하거나 조회값이 없을 경우, 그대로 결과를 리턴한다.
+				
+				둘 다 호출 성공이면서 조회값이 존재하면 배송처리 프로세스 수행
+
+
+			1-4-1.	infBody 와 basBody 의 STR_RESPONSEVOLIST 값을 resList 에 세팅
+					
+						infBodyObj : 연동 상태 미연동인 대상 조회 반환 body
+						basBodyObj : 출고수거 기본조회(수기등록 배송완료 대상조회) 반환 Body
+						
+
+			1-4-2.	resList에서 값이 있으면 꺼내서 세팅
+						1) outgoGthrNum			출고수거번호
+						2) orderNum				주문번호
+						3) orderSeq				주문순번
+						4) outgoCmdSeq			출고지시순번
+						5) outgoGthrSprCd		출고수거 구분코드
+						6) reltStatCd			관련상태 코드
+						7) lscCd				택배사 코드
+						8) wblNum				운송장 번호
+						9) dlvrEntStatCd		택배업체 상태코드
+						10) dlvrCmpltFlag		배송완료 플래그
+						
+			1-4-3.	
+					1) 	dlvrEntStatCd(택배업체 상태코드)가  11(택배사 입고), 15(택배원 출고), 20(배달완료) 중 하나이고 NULL이 아님, 
+						reltStatCd(관련 상태 코드)가 150(배송완료),
+						lscCd(택배사 코드)가 70(자체배송)이고 운송장번호가 NULL이 아닌 경우
+
+					2) outgoGthrSprCd(출고수거 구분코드)가 10(출고)
+					3) dlvrEntStatCd(택배업체 상태코드)가 [11(택배사입고), 15(택배원출고)] 가 아님
+
+					4) 	제휴사 정보 확인
+						orderNum, orderSeq를 파라미터로 selectMdPtnOrderBas 쿼리 실행하여 orderBasDtlResVoList 값 조회
+						
+						<select id="selectMdPtnOrderBas" parameterType="com.nsmall.partner.batch.biz.common.entity.MdPtnOrderBasDtlRequestVo" resultType="com.nsmall.partner.batch.biz.common.entity.MdPtnOrderBasDtlResponseVo">
+							SELECT /*com.nsmall.partner.batch.biz.common.dao.SpLoAmPtnDlvrInfoSetRoMapper.selectMdPtnOrderBas*/
+									  POD.PTN_RELT_NUM
+									, POD.PTN_RELT_SEQ
+									, POB.PTN_CLSSF_CD
+							FROM  NSDBAPTN.MD_PTN_ORDER_BAS POB
+							  JOIN  NSDBAPTN.MD_PTN_ORDER_DTL POD
+								ON  POB.ORDER_NUM = POD.ORDER_NUM
+						   WHERE  POD.ORDER_NUM = #{orderNum}
+							  AND  POD.ORDER_SEQ = #{orderSeq}
+						</select>
+
+					5) ptnReltNum, ptnReltSeq, ptnClssfCd 를 세팅
+					6) ptnClssfCd 값과 PartnerType 일치여부에 따라 각 제휴사 배송처리
+				--------------------------------------------------------------------------------------------------------------------------------------
+				1-4-3-1.	쿠팡 배송
+						1) 요청객체의 OrderId에 ptnReltNum, OrderSeq에 ptnReltSeq를 세팅 후 selectMdPtnCoupangOrderDtl 쿼리로 조회
+						
+							<select id="selectMdPtnCoupangOrderDtl" parameterType="com.nsmall.partner.batch.biz.common.entity.MdPtnCoupangOrderDtlRequestVo" resultType="com.nsmall.partner.batch.biz.common.entity.MdPtnCoupangOrderDtlResponseVo">
+								SELECT /*com.nsmall.partner.batch.biz.common.dao.SpLoAmPtnDlvrInfoSetRoMapper.selectMdPtnCoupangOrderDtl*/
+										  SHIPMENT_BOXID AS shipmentBoxId
+										, VENDOR_ITEM_ID
+										, SPLIT_SHIPPING
+										, ABLE_SPLIT_SHIPPING
+										, ESTIMATED_SHIPPING_DATE
+								FROM NSDBAPTN.MD_PTN_COUPANG_ORDER_DTL
+							   WHERE ORDER_ID = #{orderId}
+								  AND ORDPRDSEQ = #{orderSeq}
+								  ORDER BY ORDER_COUPANG_SEQ DESC
+								 LIMIT 1 
+							</select>
+	
+						2) 조회 데이터가 존재할 경우, cpDlvrDtlReqVo의 ShipmentBoxId, OrderId에 ptnReltNum, Ordprdseq 에 ptnReltSeq를 세팅 
+						3) 공통테이블의 쿠팡 택배사 코드를 조회하고 정보가 확인되면 DeliveryCompanyCode에 cpLsdCd 세팅
+						   택배사코드가 조회되지 않으면 DeliveryCompanyCode에 자체배송코드 세팅 (Direct)
+						4) InvoiceNumber에 wblNum, VendorItemId, 
+							SplitShipping에 분리배송여부(BaseConstants.BOOLEAN_FALSE), PreSplitShipped에 분리배송중 여부(BaseConstants.BOOLEAN_FALSE) 세팅
+							EstimatedShippingDate, OrdId에 orderNum 세팅
+						5) insertMdPtnCoupangDlvrDtl 쿼리 실행하여 Insert
+						
+							<update id="insertMdPtnCoupangDlvrDtl" parameterType="com.nsmall.partner.batch.biz.common.entity.MdPtnCoupangDlvrDtlRequestVo">
+							 /*com.nsmall.partner.batch.biz.common.dao.SpLoAmPtnDlvrInfoSetMapper.insertMdPtnCoupangDlvrDtl*/ 
+							WITH VAL AS (SELECT * 
+												FROM NSDBAPTN.MD_PTN_COUPANG_DLVR_DTL 
+											   WHERE SHIPMENT_BOX_ID = #{shipmentBoxId}
+												  AND VENDOR_ITEM_ID = #{vendorItemId}
+												  AND ORDER_ID = #{orderId}) 
+								  , INS AS (SELECT #{shipmentBoxId} as SHIPMENT_BOX_ID
+													  , #{orderId} as ORDER_ID
+													  , #{ordprdseq} as ORDPRDSEQ
+													  , #{deliveryCompanyCode} as DELIVERY_COMPANY_CODE
+													  , #{invoiceNumber} as INVOICE_NUMBER
+													  , #{vendorItemId} as VENDOR_ITEM_ID
+													  , #{splitShipping} as SPLIT_SHIPPING
+													  , #{preSplitShipped} as PRE_SPLIT_SHIPPED
+													  , #{estimatedShippingDate} as ESTIMATED_SHIPPING_DATE
+													  , #{ordId} as ORD_ID
+											  WHERE NOT EXISTS (SELECT * FROM VAL))
+						   INSERT INTO NSDBAPTN.MD_PTN_COUPANG_DLVR_DTL 
+										  ( LINK_DATE
+										  , TRANS_COUPANG_SEQ
+										  , SHIPMENT_BOX_ID
+										  , ORDER_ID
+										  , ORDPRDSEQ
+										  , DELIVERY_COMPANY_CODE
+										  , INVOICE_NUMBER
+										  , VENDOR_ITEM_ID
+										  , SPLIT_SHIPPING
+										  , PRE_SPLIT_SHIPPED
+										  , ESTIMATED_SHIPPING_DATE
+										  , ORD_ID
+										  , RESULT_CODE
+										  , RESULT_MESSAGE
+										  , NS_LINK_STAT_CD
+										  , LINK_TRAN_DTTM
+										  , INIT_REGI_PIC
+										  , INIT_REGI_DTTM
+										  , FINAL_RVIS_PIC
+										  , FINAL_RVIS_DTTM)
+								  SELECT TO_CHAR(NOW(), 'YYYY-MM-DD')
+										  , NEXTVAL('NSDBAPTN.sq_md_ptn_coupang_dlvr_dtl')
+										  , SHIPMENT_BOX_ID
+										  , ORDER_ID
+										  , ORDPRDSEQ
+										  , DELIVERY_COMPANY_CODE
+										  , INVOICE_NUMBER
+										  , VENDOR_ITEM_ID
+										  , SPLIT_SHIPPING
+										  , PRE_SPLIT_SHIPPED
+										  , ESTIMATED_SHIPPING_DATE
+										  , ORD_ID
+										  , NULL
+										  , NULL
+										  , '30'
+										  , TO_CHAR(NOW(), 'YYYYMMDDHH24MISS')
+										  , 'COMALL'
+										  , NOW()
+										  , 'COMALL'
+										  , NOW()
+								   FROM INS
+							</update>
+						
+				1-4-3-2.	11번가 배송
+						1) 요청객체의 Ordno에 ptnReltNum, Ordprdseq에 ptnReltSeq를 세팅 후 selectMdPtnSt11OrderDtl 쿼리로 조회
+						
+							<select id="selectMdPtnSt11OrderDtl" parameterType="com.nsmall.partner.batch.biz.common.entity.MdPtnSt11OrderDtlRequestVo" resultType="com.nsmall.partner.batch.biz.common.entity.MdPtnSt11OrderDtlResponseVo">
+								 SELECT /*com.nsmall.partner.batch.biz.common.dao.SpLoAmPtnDlvrInfoSetRoMapper.selectMdPtnSt11OrderDtl*/
+										   ORDPRDSEQ
+										 , DLVNO
+								  FROM NSDBAPTN.MD_PTN_11ST_ORDER_DTL
+								 WHERE ORDNO = #{ordno}
+									 AND ORDPRDSEQ = #{ordprdseq}
+								  ORDER BY ORDER_11ST_SEQ DESC
+								   LIMIT 1
+							</select>
+						
+						2) 조회 데이터가 존재할 경우, st11DlvrDtlReqVo의 Ordno에 ptnReltNum, Ordprdseq, Dlvmthdcd에 lscCd 를 세팅
+						3) 공통테이블의 11번가 택배사 코드를 조회하고 정보가 확인되면 Dlvetprscd에 st11lscCd 세팅
+						   택배사 코드가 조회되지 않으면 자체배송코드 세팅 (00099 - DLVR_CD_ETC_ST11)
+						4) Invcno에 wblNum, Dlvno, OrdId에 orderNum, PtnCd에 ptnclssfCd 세팅
+						5) insertMdPtnSt11DlvrDtl 쿼리 실행하여 insert
+						
+							<update id="insertMdPtnSt11DlvrDtl" parameterType="com.nsmall.partner.batch.biz.common.entity.MdPtnSt11DlvrDtlRequestVo">
+							 /*com.nsmall.partner.batch.biz.common.dao.SpLoAmPtnDlvrInfoSetMapper.insertMdPtnSt11DlvrDtl*/ 
+							WITH VAL AS (SELECT * 
+												FROM NSDBAPTN.MD_PTN_11ST_DLVR_DTL 
+											   WHERE ORDNO = #{ordno} 
+												  AND DLVNO = #{dlvno}
+												  AND ORD_ID = #{ordId}
+												  AND PTN_CD = #{ptnCd})
+								  , INS AS (SELECT #{ordno} as ORDNO
+													  , #{ordprdseq} as ORDPRDSEQ
+													  , #{dlvmthdcd} as DLVMTHDCD
+													  , #{dlvetprscd} as DLVETPRSCD
+													  , #{invcno} as INVCNO
+													  , #{dlvno} as DLVNO
+													  , #{ordId} as ORDID
+													  , #{ptnCd} as PTNCD
+											  WHERE NOT EXISTS (SELECT * FROM VAL))
+						   INSERT INTO NSDBAPTN.MD_PTN_11ST_DLVR_DTL 
+										  ( LINK_DATE
+										  , TRANS_11ST_SEQ
+										  , ORDNO
+										  , ORDPRDSEQ
+										  , SENDDT
+										  , DLVMTHDCD
+										  , DLVETPRSCD
+										  , INVCNO
+										  , DLVNO
+										  , RESULT
+										  , NS_LINK_STAT_CD
+										  , ETR_DATE
+										  , MDF_DATE
+										  , ORD_ID
+										  , PTN_CD)
+								  SELECT CURRENT_DATE
+										  , NEXTVAL('NSDBAPTN.sq_md_ptn_11st_dlvr_plc_dtl')
+										  , ORDNO
+										  , ORDPRDSEQ
+										  , TO_CHAR(NOW(), 'YYYYMMDD')
+										  , (CASE WHEN DLVMTHDCD = '70' THEN '03' ELSE '01' END) -- 배송방식 자체 : 03, 그외 택배사 : 01
+										  , DLVETPRSCD
+										  , INVCNO
+										  , DLVNO
+										  , NULL
+										  , '30'
+										  , NOW()
+										  , NOW()
+										  , ORDID
+										  , PTNCD
+								   FROM INS
+							</update>
+						
+				1-4-3-3.	티몬 배송
+						1) 요청객체의 TmonOrderNo에 ptnReltNum, Ordprdseq에 ptnReltSeq 세팅 후 selectMdPtnTmonOrderDtl 쿼리로 조회
+						
+							<select id="selectMdPtnTmonOrderDtl" parameterType="com.nsmall.partner.batch.biz.common.entity.MdPtnTmonOrderDtlRequestVo" resultType="com.nsmall.partner.batch.biz.common.entity.MdPtnTmonOrderDtlResponseVo">
+								   /*com.nsmall.partner.batch.biz.common.dao.SpLoAmPtnDlvrInfoSetRoMapper.selectMdPtnTmonOrderDtl*/
+								   SELECT DELIVERY_NO
+										, TMON_DEAL_NO
+										, TMON_DEAL_OPTION_NO
+										, DELIVERY_SCHEDULED_DATE
+									FROM NSDBAPTN.MD_PTN_TMON_ORDER_DTL
+								   WHERE TMON_ORDER_NO = #{tmonOrderNo} :: NUMERIC
+									  AND ORDPRDSEQ = #{ordprdseq}
+									 LIMIT 1
+							</select>
+							
+						2) 조회 데이터가 존재할 경우, tmonDlvrDtlReqVo의 TmonOrderNo에 ptnReltNum, 
+						   Ordprdseq에 ptnReltSeq, DeliveryNo, TmonDealNo, TmonDealOptionNo, Qty 세팅
+						3) 공통테이블의 티몬 택배사 코드를 조회하고 정보가 확인되면 DeliveryCorp에 tmonLscCd를 세팅
+						   택배사 코드가 없거나 자체배송일 경우, DeliveryCorp에 자체배송코드 세팅 (DLVR_CD_ETC_TMON - DIRECT)
+						4) DeliveryScheduledDate, InvoiceNo에 wblNum, OrdId에 orderNum, OrdSeq, PtnCd에 ptnClssCd 세팅
+						5) insertMdPtnTmonDlvrDtl 쿼리 실행하여 insert
+						
+							<update id="insertMdPtnTmonDlvrDtl" parameterType="com.nsmall.partner.batch.biz.common.entity.MdPtnTmonDlvrDtlRequestVo">
+							 /*com.nsmall.partner.batch.biz.common.dao.SpLoAmPtnDlvrInfoSetMapper.insertMdPtnTmonDlvrDtl*/ 
+							WITH VAL AS ( SELECT *
+											FROM NSDBAPTN.MD_PTN_TMON_DLVR_DTL
+										   WHERE ORD_ID = #{ordId}
+											 AND PTN_CD = #{ptnCd}::NUMERIC
+											 AND TMON_ORDER_NO = #{tmonOrderNo}
+											 AND ORDPRDSEQ = #{ordprdseq}
+											 AND DELIVERY_NO = #{deliveryNo}
+											 AND ORD_SEQ = #{ordSeq}
+							  ), INS AS ( SELECT #{tmonOrderNo} AS TMON_ORDER_NO
+											   , #{ordprdseq} AS ORDPRDSEQ
+											   , #{deliveryNo} AS DELIVERY_NO 
+											   , #{tmonDealNo} AS TMON_DEAL_NO 
+											   , #{tmonDealOptionNo} AS TMON_DEAL_OPTION_NO
+											   , #{qty} AS QTY
+											   , #{deliveryCorp} AS DELIVERY_CORP 
+											   , #{invoiceNo} AS INVOICE_NO
+											   , TO_CHAR(#{deliveryScheduledDate}::TIMESTAMP, 'YYYY-MM-DD') AS DELIVERY_SCHEDULED_DATE /*(YYYY-MM-DD)*/
+											   , #{ordId} AS ORD_ID
+											   , #{ordSeq} AS ORD_SEQ
+											   , #{ptnCd}::NUMERIC AS PTN_CD
+										   WHERE NOT EXISTS (SELECT * FROM VAL))
+						  INSERT INTO NSDBAPTN.MD_PTN_TMON_DLVR_DTL
+									  (
+										  LINK_DATE                             
+										, DLVR_TMON_SEQ                         
+										, TMON_ORDER_NO                         
+										, ORDPRDSEQ                             
+										, DELIVERY_NO                           
+										, TMON_DEAL_NO                          
+										, TMON_DEAL_OPTION_NO                   
+										, QTY                                   
+										, DELIVERY_CORP                         
+										, INVOICE_NO                            
+										, ADDITIONAL_INVOICES                   
+										, DELIVERY_SCHEDULED_DATE               
+										, ORD_ID                                
+										, ORD_SEQ                               
+										, PTN_CD                                
+										, RESULT_CODE                           
+										, RESULT_MESSAGE                        
+										, NS_LINK_STAT_CD                       
+										, LINK_TRAN_DTTM                        
+										, INIT_REGI_PIC                         
+										, INIT_REGI_DTTM                        
+										, FINAL_RVIS_PIC                        
+										, FINAL_RVIS_DTTM                       
+									   )
+								SELECT TO_CHAR(NOW(), 'YYYYMMDD')
+									 , NEXTVAL('NSDBAPTN.sq_md_ptn_tmon_dlvr_dtl')
+									 , TMON_ORDER_NO
+									 , ORDPRDSEQ
+									 , DELIVERY_NO
+									 , TMON_DEAL_NO
+									 , TMON_DEAL_OPTION_NO
+									 , QTY
+									 , DELIVERY_CORP
+									 , INVOICE_NO
+									 , null
+									 , DELIVERY_SCHEDULED_DATE
+									 , ORD_ID
+									 , ORD_SEQ
+									 , PTN_CD
+									 , null
+									 , null
+									 , '30'
+									 , TO_CHAR(NOW(), 'YYYYMMDDHH24MISS')
+									 , 'COMALL'
+									 , NOW()
+									 , 'COMALL'
+									 , NOW()
+								  FROM INS
+							</update>
+				
+				1-4-3-4.	인터파크 배송
+						1) 요청객체의 OrdClmNo에 ptnReltNum, InterparkOrdSeq에 ptnReltSeq를 세팅 후 selectMdPtnInterparkOrderDtl 쿼리로 조회
+						
+							<select id="selectMdPtnInterparkOrderDtl" parameterType="com.nsmall.partner.batch.biz.common.entity.MdPtnInterparkOrderDtlRequestVo" resultType="com.nsmall.partner.batch.biz.common.entity.MdPtnInterparkOrderDtlResponseVo">
+								   /*com.nsmall.partner.batch.biz.common.dao.SpLoAmPtnDlvrInfoSetRoMapper.selectMdPtnInterparkOrderDtl*/
+								   SELECT OPT_PRD_TP
+										, ORD_ID
+										, OPT_PARENT_SEQ
+										, PRODUCT_DELVSETL_SEQ
+										, ORDCLM_STAT_DTS
+									FROM NSDBAPTN.MD_PTN_INTERPARK_ORDER_DTL
+								   WHERE ORD_NO = #{ordClmNo}   ::TEXT
+									  AND ORD_SEQ = #{interparkOrdSeq} :: NUMERIC
+									 LIMIT 1
+							</select>
+						
+						2) 조회 데이터가 존재할 경우, interparkDlvrDtlReqVo의 OrdClmNo에 ptnReltNum, InterparkOrdSeq에 ptnReltSeq, DelvDt 를 세팅
+						3) 공통테이블의 인터파크 택배사 코드를 조회하고 정보가 확인되면 DelvEntrNo에 interparkLscCd 세팅
+						   택배사 코드가 없거나 자체배송일 경우, DelvEntrNo에 자체배송코드 세팅 (DLVR_CD_ETC_INTERPARK - DIRECT)
+						4) InvoNo에 wblNum, OptPrdTp, OptParentSeq, OrdId에 orderNum, OrdSeq, PtnCd에 ptnClssfCd 세팅
+						5) insertMdPtnInterparkDlvrDtl 쿼리 실행하여 insert
+						
+							<update id="insertMdPtnInterparkDlvrDtl" parameterType="com.nsmall.partner.batch.biz.common.entity.MdPtnInterparkDlvrDtlRequestVo">
+							 /*com.nsmall.partner.batch.biz.common.dao.SpLoAmPtnDlvrInfoSetMapper.insertMdPtnInterparkDlvrDtl*/ 
+								WITH VAL AS ( SELECT *
+													FROM NSDBAPTN.MD_PTN_INTERPARK_DLVR_DTL
+												   WHERE ORD_ID = #{ordId}::NUMERIC
+													 AND PTN_CD = #{ptnCd}
+													 AND ORD_CLM_NO = #{ordClmNo}
+													 AND INTERPARK_ORD_SEQ = #{interparkOrdSeq}
+													 AND ORD_SEQ = #{ordSeq}::TEXT
+									  ), INS AS ( SELECT #{ordClmNo} AS ORD_CLM_NO              /* text */
+													   , #{interparkOrdSeq} AS INTERPARK_ORD_SEQ        /* numeric */
+													   , SUBSTRING(#{delvDt}, 0, 9) AS DELV_DT                   /*YYYYMMDD*/
+													   , #{delvEntrNo} AS DELV_ENTR_NO          /* text */
+													   , #{invoNo} AS INVO_NO                   /* text */
+													   , #{optPrdTp} AS OPT_PRD_TP              /* text */
+													   , #{optParentSeq} AS OPT_PARENT_SEQ      /* numeric */
+													   , #{ordId}::NUMERIC AS ORD_ID                    /* numeric */
+													   , #{ordSeq}::TEXT AS ORD_SEQ                 /* text */
+													   , #{ptnCd} AS PTN_CD                 /* numeric */
+												   WHERE NOT EXISTS (SELECT * FROM VAL))
+								  INSERT INTO NSDBAPTN.MD_PTN_INTERPARK_DLVR_DTL
+											  (
+												  LINK_DATE                            
+												, DLVR_INTERPARK_SEQ                        
+												, ORD_CLM_NO                            
+												, INTERPARK_ORD_SEQ                         
+												, DELV_DT          
+												, DELV_ENTR_NO     
+												, INVO_NO          
+												, OPT_PRD_TP
+												, OPT_PARENT_SEQ       
+												, ORD_ID           
+												, ORD_SEQ          
+												, PTN_CD           
+												, NS_LINK_STAT_CD  
+												, LINK_TRAN_DTTM   
+												, INIT_REGI_PIC    
+												, INIT_REGI_DTTM   
+												, FINAL_RVIS_PIC   
+												, FINAL_RVIS_DTTM  
+											   )
+										SELECT TO_CHAR(NOW(), 'YYYYMMDD')
+											 , NEXTVAL('NSDBAPTN.SQ_MD_PTN_INTERPARK_DLVR_DTL')
+											 , ORD_CLM_NO
+											 , INTERPARK_ORD_SEQ
+											 , DELV_DT
+											 , DELV_ENTR_NO
+											 , INVO_NO
+											 , OPT_PRD_TP
+											 , OPT_PARENT_SEQ
+											 , ORD_ID
+											 , ORD_SEQ
+											 , PTN_CD
+											 , '30'
+											 , TO_CHAR(NOW(), 'YYYYMMDDHH24MISS')
+											 , 'COMALL'
+											 , NOW()
+											 , 'COMALL'
+											 , NOW()
+										  FROM INS
+							</update>
+						
+				1-4-3-5.	AK몰
+						1) 출고이력정보조회 요청객체 생성
+						2) RequestEntity에 outgoGthrNum 세팅 후 dtm 쪽 Request 호출 실행
+						3) dlvrEntStatCd(택배업체 상태코드)가 20이면서 요청 결과가 1건 이상일 때 ptnDlvEntCd에 배송완료로 세팅(PTNDLVENTCD_20)
+						   아닌 경우, ptnDlvEntcd에 출고완료로 세팅(PTNDLVENTCD_10)
+						4) akOrdDtlReqVo에 OrdId에 ptnReltNum, OrdGoodsSeq에 ptnReltSeq를 세팅 후 selectMdPtnAkOrderDtl 쿼리로 조회 (주문 정보 확인)
+						5) 조회데이터가 존재할 경우, delivId, saleCnfmCd에 ptnDlvEntCd를 세팅 후 getMdPtnAkDvlrDtlChk 쿼리 실행하여 기존재여부 체크
+						6) 기존 데이터가 존재하지 않으면, akDlvrDtlReqVo에 ptnDlvEntCd, EdiGb에 ptnDlvEntCd, OrdId에 orderNum, OrdSeq, AKOrdId에 ptnReltNum,
+						   AkOrdSeq, DelivId, WaybillNo에 wblNum, DelivMemo 를 세팅
+						7) 공통테이블의 AK 택배사 코드를 조회하고 정보가 확인되면 DelivCompId에 akLscCd를 세팅
+						   택배사 코드가 없을 경우, DelivCompId에 자체배송코드 세팅 (27 - DLVR_CD_ETC_AK)
+						8) insertMdPtnAKDlvrDtl 쿼리 실행하여 insert
+						
+							<update id="insertMdPtnAKDlvrDtl" parameterType="com.nsmall.partner.batch.biz.common.entity.MdPtnAKDlvrDtlRequestVo">
+							 /*com.nsmall.partner.batch.biz.common.dao.SpLoAmPtnDlvrInfoSetMapper.insertMdPtnAKDlvrDtl*/ 
+							WITH VAL AS (SELECT * 
+												FROM NSDBAPTN.MD_PTN_AK_DLVR_DTL 
+											   WHERE ORD_ID = #{ordId} 
+												  AND DELIV_ID = #{delivId} 
+												  AND AK_ORD_ID = #{akOrdId}
+												  AND SALE_CNFM_CD = #{saleCnfmCd}) 
+								  , INS AS (SELECT #{saleCnfmCd} as SALECNFMCD
+													  , #{ediGb} as EDIGB
+													  , #{ordId} as ORDID
+													  , #{ordSeq} as ORDSEQ
+													  , #{akOrdId} as AKORDID
+													  , #{akOrdSeq} as AKORDSEQ
+													  , #{delivId} as DELIVID
+													  , #{waybillNo} as WAYBILLNO
+													  , #{delivCompId} as DELIVCOMPID
+													  , #{delivMemo} as DELIVMEMO
+											  WHERE NOT EXISTS (SELECT * FROM VAL))
+								INSERT INTO NSDBAPTN.MD_PTN_AK_DLVR_DTL
+									   ( LINK_DATE                /* 연동일자(YYYYMMDD) */
+										, NS_LINK_STAT_CD       /* 연동상태 */
+										, LINK_TRAN_DTTM       /* 연동처리시각(YYYYMMDDHH24MISS) */
+										, SALE_CNFM_CD           /* 출고완료/배송완료 */
+										, EDI_GB                      /* 주문,취소,반품구분 */
+										, ORD_ID                     /* NS주문번호 */
+										, ORD_SEQ                   /* NS주문SEQ */
+										, SALE_APPLY_DATE        /* 매출확정일 */
+										, AK_ORD_ID                /* AK주문번호 */
+										, AK_ORD_SEQ              /* AK주문순번 */
+										, DELIV_ID                   /* 배송ID */
+										, WAYBILL_NO              /* 운송장번호 */
+										, DELIV_COMP_ID          /* 택배사ID */
+										, DELIV_MEMO             /* 배송메모 */
+										, ETR_ID                     /* 등록자 */
+										, ETR_DATE                 /* 등록일시 */
+										, MDF_ID                    /* 수정자 */
+										, MDF_DATE                /* 수정일시 */
+										)
+								SELECT TO_CHAR(NOW(), 'YYYYMMDD')
+										, '30'
+										, '00000000000000'
+										, SALECNFMCD
+										, EDIGB
+										, ORDID
+										, ORDSEQ
+										, NOW()
+										, AKORDID
+										, AKORDSEQ
+										, DELIVID
+										, WAYBILLNO
+										, DELIVCOMPID
+										, DELIVMEMO
+										, 'COMALL'
+										, NOW()
+										, 'COMALL'
+										, NOW()
+								FROM INS
+							</update>
+				
+				1-4-3-6.	지마켓, 옥션 배송
+						1) 요청객체에 PayNo에 ptnReltNum, OrderNo에 ptnReltSeq를 세팅 후 selectMdPtnEbayOrderDtl 쿼리로 조회
+						2) 조회 데이터가 존재할 경우, OrderNo에 ptnReltNum, Ordprdseq에 ptnReltSeq, InvoiceNo에 wblNum 세팅
+						3) reltStatCd가 150(배송완료)이면서 dlvrEntStatCd가 20(택배업체 상태코드 - 배달완료)이면서 lscCd는 70(자체배송), 또는 dlvrCmpltFlag가 true 일 때
+						   OrdStatCd에 PTNDLVENTCD_20 세팅(배송완료)
+						   
+						   아닌 경우, OrdStatCd에 PTNDLVENTCD_10 세팅(발송처리)
+						4) ebayDlvrDtlReqVo에 OrdId에 orderNum, OrdSeq, ptnCd에 ptnclssfCd 세팅
+						5) ptnClssfCd가 지마켓 타입인 경우, directLscCd에 지마켓 자체배송코드 세팅(10032 - DLVR_CD_ETC_GMARKET)
+						   ptnClssfCd가 옥션 타입인 경우, directLscCd에 옥션 자체배송코드 세팅(10070 - DLVR_CD_ETC_AUCTION)
+						6) 공통테이블의 Ebay 택배사 코드를 조회하고 정보가 확인되면 DeliveryCompanyCode에 ebayLscCd 세팅
+						   택배사 코드가 조회되지 않을 경우, DeliveryCompanyCode에 자체배송코드 세팅(directLscCd)
+						7) insertMdPtnEbayDlvrDtl 쿼리 실행하여 insert
+						
+							<update id="insertMdPtnEbayDlvrDtl" parameterType="com.nsmall.partner.batch.biz.common.entity.MdPtnEbayDlvrDtlRequestVo">
+							 /*com.nsmall.partner.batch.biz.common.dao.SpLoAmPtnDlvrInfoSetMapper.insertMdPtnEbayDlvrDtl*/ 
+							WITH VAL AS (SELECT * 
+												FROM NSDBAPTN.MD_PTN_EBAY_DLVR_DTL 
+											   WHERE ORDER_NO = #{orderNo}
+												  AND ORDPRDSEQ = #{ordprdseq}
+												  AND ORD_ID = #{ordId}
+												  AND ORD_STAT_CD = #{ordStatCd}
+												  AND PTN_CD = #{ptnCd})
+								  , INS AS (SELECT #{orderNo} as ORDERNO
+													  , #{ordprdseq} as ORDPRDSEQ
+													  , #{deliveryCompanyCode} as DELIVERYCOMPANYCODE
+													  , #{invoiceNo} as INVOICENO
+													  , #{ordStatCd} as ORDSTATCD
+													  , #{ordId} as ORDID
+													  , #{ordSeq} as ORDSEQ
+													  , #{ptnCd} as PTNCD
+											  WHERE NOT EXISTS (SELECT * FROM VAL))
+								INSERT INTO NSDBAPTN.MD_PTN_EBAY_DLVR_DTL
+									   ( LINK_DATE                         /*연동일자*/ 
+									   , TRANS_EBAY_SEQ                 /*배송연동SEQ*/
+									   , ORDER_NO                         /*EBAY주문번호*/
+									   , ORDPRDSEQ                       /*EBAY주문순번*/
+									   , SHIPPING_DATE                   /*발송일*/
+									   , DELIVERY_COMPANY_CODE    /*택배사코드*/
+									   , INVOICE_NO                       /*송장번호*/
+									   , ORD_STAT_CD                    /*발송처리,배송완료*/
+									   , ORD_ID                             /*NS주문번호*/
+									   , ORD_SEQ                           /*NS주문순번*/
+									   , PTN_CD                             /*제휴사코드*/
+									   , RESULT_CODE
+									   , RESULT_MESSAGE
+									   , NS_LINK_STAT_CD
+									   , LINK_TRAN_DTTM
+									   , INIT_REGI_PIC
+									   , INIT_REGI_DTTM
+									   , FINAL_RVIS_PIC
+									   , FINAL_RVIS_DTTM
+										)
+								SELECT TO_CHAR(NOW(), 'YYYYMMDD')
+										, NEXTVAL('NSDBAPTN.sq_md_ptn_ebay_dlvr_dtl')
+										, ORDERNO 
+										, ORDPRDSEQ
+										, TO_CHAR(NOW(), 'YYYY-MM-DD')
+										, DELIVERYCOMPANYCODE
+										, INVOICENO
+										, ORDSTATCD
+										, ORDID
+										, ORDSEQ
+										, PTNCD
+										, NULL
+										, NULL
+										, '30'
+										, TO_CHAR(NOW(), 'YYYYMMDDHH24MISS')
+										, 'COMALL'
+										, NOW()
+										, 'COMALL'
+										, NOW()
+								FROM INS
+							</update>
+						   
+	****		1-4-3-7.	네이버 배송
+						1) 요청객체에 OrderId에 ptnReltNum, ProductOrderId에 ptnReltSeq 세팅 후 selectMdPtnNaverOrderDtl 쿼리로 주문정보 조회
+						2) 조회 데이터가 존재할 경우, ProductOrderId(상품주문번호), TrackingNumber에 wblNum(송장번호), DispatchDate에 null(배송일), 
+						   BarcodeNoList에 null(바코드번호리스트), ECouponNo에 null(e쿠폰번호), OrdId에 orderNum, OrdSeq, PtnCd에 ptnClssfCd 세팅
+						3) 공통 테이블의 네이버 택배사 코드를 조회하고 조회값이 없거나 lscCd가 자체배송코드(70)인 경우, 
+						   DeliveryCompanyCode에 DLVR_CD_ETC_NAVER(CH1), DeliveryMethodCode에 DIRECT_DELIVERY(직접전달) 세팅
+						   
+						   자체배송이 아닌 경우, DeliveryCompanyCode에 네이버 택배사 코드, DeliveryMethodCode에 DELIVERY(택배,등기,소포) 세팅
+						4) insertMdPtnNaverDlvrDtl 쿼리 실행하여 insert
+						
+							<update id="insertMdPtnNaverDlvrDtl" parameterType="com.nsmall.partner.batch.biz.common.entity.MdPtnNaverDlvrDtlRequestVo">
+							 /*com.nsmall.partner.batch.biz.common.dao.SpLoAmPtnDlvrInfoSetMapper.insertMdPtnNaverDlvrDtl*/ 
+								WITH VAL AS ( SELECT *
+													FROM NSDBAPTN.MD_PTN_NAVER_DLVR_DTL
+												   WHERE ORD_ID = #{ordId}
+													  AND ORD_SEQ = #{ordSeq}
+													  AND PRODUCT_ORDER_ID = #{productOrderId}
+													  AND PTN_CD = #{ptnCd}
+									  ), INS AS ( SELECT #{productOrderId} AS PRODUCT_ORDER_ID
+															, #{deliveryMethodCode} AS DELIVERY_METHOD_CODE
+															, #{deliveryCompanyCode} AS DELIVERY_COMPANY_CODE
+															, #{trackingNumber} AS TRACKING_NUMBER
+															, #{barcodeNoList} AS BARCODE_NO_LIST
+															, #{eCouponNo} AS E_COUPON_NO
+															, #{ordId} AS ORD_ID
+															, #{ordSeq} AS ORD_SEQ
+															, #{ptnCd} AS PTN_CD
+												   WHERE NOT EXISTS (SELECT * FROM VAL))
+								  INSERT INTO NSDBAPTN.MD_PTN_NAVER_DLVR_DTL
+											  (
+												  LINK_DATE
+												, DLVR_NAVER_SEQ
+												, PRODUCT_ORDER_ID
+												, DELIVERY_METHOD_CODE
+												, DELIVERY_COMPANY_CODE
+												, TRACKING_NUMBER
+												, DISPATCH_DATE
+												, BARCODE_NO_LIST
+												, E_COUPON_NO
+												, ORD_ID
+												, ORD_SEQ
+												, PTN_CD
+												, NS_LINK_STAT_CD
+												, LINK_TRAN_DTTM
+												, INIT_REGI_PIC
+												, INIT_REGI_DTTM
+												, FINAL_RVIS_PIC
+												, FINAL_RVIS_DTTM
+											   )
+										SELECT TO_CHAR(NOW(), 'YYYYMMDD')
+												, NEXTVAL('NSDBAPTN.SQ_MD_PTN_NAVER_DLVR_DTL')
+												, PRODUCT_ORDER_ID
+												, DELIVERY_METHOD_CODE
+												, DELIVERY_COMPANY_CODE
+												, TRACKING_NUMBER
+												, TO_CHAR(NOW(), 'YYYYMMDD')
+												, BARCODE_NO_LIST
+												, E_COUPON_NO
+												, ORD_ID
+												, ORD_SEQ
+												, PTN_CD
+												, '30'
+												, TO_CHAR(NOW(), 'YYYYMMDDHH24MISS')
+												, 'COMALL'
+												, NOW()
+												, 'COMALL'
+												, NOW()
+										 FROM INS
+							</update>
+						
+							
+				--------------------------------------------------------------------------------------------------------------------------------------
+			
+			1-4-4.
+					최종 반영 여부 UPDATE
+					1) DtmApiRequestVo를 ServiceType.ETC_UPDATE_LO_AFLT_DLVR_INFO_INF로 설정
+					2) STR_OUTGOGTHRNUM, STR_ORDERNUM, STR_ORDERSEQ, STR_OUTGOCMDSEQ 값 설정
+					3) Insert 성공일 경우, STR_INTLCSTATCD를 100 연동성공으로 세팅(INTLCSTATCD_SUCCESS)
+					   Insert 실패일 경우, STR_INTLCSTATCD를 300 연동실패로 세팅(INTLCSTATCD_FAIL)
+					
+					4) DTM request 호출
+					
+						<update id="updateLoAfltDlvrInfoInf" parameterType="com.nsmall.partner.dtm.api.server.legacy.entity.LoAfltDlvrInfoApiRequestVo">
+							/* com.nsmall.partner.dtm.biz.legacy.dao.rc.LoAfltDlvrInfoInfRcMapper.updateLoAfltDlvrInfoInf */
+							UPDATE NSMAIN.LO_AFLT_DLVR_INFO_INF
+								  SET INTLC_STAT_CD = #{intlcStatCd}
+									  , INTLC_DTTM = SYSDATE
+							 WHERE OUTGO_GTHR_NUM = #{outgoGthrNum}
+								AND ORDER_NUM = #{orderNum}
+								AND ORDER_SEQ = #{orderSeq}
+								AND OUTGO_CMD_SEQ = #{outgoCmdSeq} 
+						</update>
+
+		1-5. 	infCode, basCode 가 200이 아닌 경우, ERROR 인 400으로 설정하고 메세지 반환
+		
+		
+		
+---------------------------------------------------------------------------------------------------------
+
+	제휴사 공통 택배사 코드 조회 메소드 (getPtnLscCd)
+		1) fcMdPtnLscCdVo에 NsLscCd에 lscCd, PtnLscCommName, PtnName 을 세팅
+		2) getPtnLscCd 쿼리 실행하여 조회 값 반환
+				
+			
+			
+============================================================================================================	
+============================================================================================================	
+	
+	
+	ShippingCmpltJob
+	
+	제휴사 배송 확정
+	
+	
+	RestfulServiceType이 OUTBOUND 인 outboundClient 객체 설정
+	요청객체인 OutboundApiRequestVo에 ServiceType은 배송완료(COMPLETE_SHIPPING), 제휴사 종류 세팅
+	
+	11번가일 때, 11번가로 파트너 타입 세팅 필요
+	
+	API 요청 
+	
+		/apis/api/complete/shipping/{partnerName}
+		
+		CompleteApiServerServiceImpl.java (nsm-off-ob)
+		아웃바운드 쪽 서비스 path를 타고 들어간다.
+		
+		
+		1. 제휴사 별로 OutboundService 객체를 선언
+			1-1. 쿠팡
+					OutboundTargetType이 COUPANG, CoupangBizType이 COMPLETE_SHIPPING 인 OutboundService의 request(null) 메소드 실행
+					ShippingCmpltService.java 의 request
+					
+					작업기준일자로 사용할 현재시간(now), 3일전 (threeDays) 을 설정
+					
+					1-1-1. 배송정보 처리상태 업데이트 30 -> 31
+						shippingCmpltService 의 updateShipCmpltTrgtFlag(sBaseDate3) 실행
+						
+						ShippingCmpltSearchVo 에 PreNsLinkStatCd, NsLinkStatCd 에 BaseConstants.STAT_SHIP_READY(준비중) 으로 세팅
+						PreNsLinkStatDate에 sBaseDate3 세팅
+						
+						shippingCmpltTxMapper 의 updateShipCmpltTrgtFlag 실행
+						
+						<!-- 배송정보 처리상태 업데이트 30 -> 31 데이터 상태 변경 -->
+						<update id="updateShipCmpltTrgtFlag" parameterType="com.nsmall.partner.outbound.biz.coupang.entity.shipping.ShippingCmpltSearchVo">
+						   UPDATE /* com.nsmall.partner.outbound.biz.coupang.dao.tx.ShippingCmpltTxMapper.updateShipCmpltTrgtFlag */
+									   NSDBAPTN.MD_PTN_COUPANG_DLVR_DTL
+								 SET NS_LINK_STAT_CD = #{nsLinkStatCd}
+									 , FINAL_RVIS_DTTM = NOW()
+							WHERE NS_LINK_STAT_CD = #{preNsLinkStatCd}
+							   AND LINK_DATE  <![CDATA[>=]]> #{preNsLinkStatDate}
+						</update>
+						
+					1-1-2. 관련 NSSR-13601 : 내부 오류건 재연동 처리
+					   //API 호출 오류건 재연동 업데이트
+					   ShippingCmpltService 의 updateFailShipCmpltTrgt() 실행
+					   
+					   배송확정 API 처리건 오류시 재연동
+					   shippingCmpltTxMapper 의 updateFailShipCmpltTrgt() 실행
+					   
+					   <!-- 배송확정 API 처리건 오류시 재연동 -->
+						<update id="updateFailShipCmpltTrgt">  
+							UPDATE  /* com.nsmall.partner.outbound.biz.coupang.dao.tx.ShippingCmpltTxMapper.updateFailShipCmpltTrgt */ 
+									   NSDBAPTN.MD_PTN_COUPANG_DLVR_DTL
+								  SET RESULT_CODE = NULL
+									  , LINK_DATE = TO_CHAR(NOW(),'YYYY-MM-DD')
+									  , RESULT_MESSAGE = NULL
+									  , NS_LINK_STAT_CD = '31'
+									  , FINAL_RVIS_PIC  = 'COMALL'
+									  , FINAL_RVIS_DTTM = NOW()
+									  , LINK_TRAN_DTTM = TO_CHAR(NOW(),'YYYYMMDDHH24MISS')
+							 WHERE NS_LINK_STAT_CD = '39'
+								AND RESULT_MESSAGE LIKE '%COUPANG API FAILED%'
+						</update>  
+					   
+					
+			1-2. 11번가
+					OutboundTargetType이 ST11, St11BizType이 COMPLETE_SHIPPING 인 ShippingCmpltSt11Service의 requestShippingCmplt() 메소드 실행
+					
+					1-2-1. 작업중으로 상태 변경
+						ShippingCmpltSearchVo에 
+						PreNsLinkStatCd를 BatchConstants.NS_LINK_STAT_CD_30, 
+						NsLinkStatCd를 NS_LINK_STAT_CD_31
+						PtnCd 를 세팅하여 updateReqDeliveryStatus를 실행
+						
+							배송중 처리 처리상태 업데이트 30 -> 31
+							updateReqDeliveryStatus
+							updateFailedDeliveryStatus
+							
+							<!-- 배송중 처리 전 작업중으로 상태변경 -->
+							<update id="updateReqDeliveryStatus" parameterType="com.nsmall.partner.outbound.biz.st11.entity.shipping.ShippingCmpltSearchVo">
+								 /*com.nsmall.partner.outbound.biz.st11.dao.tx.ShippingCmpltSt11TxMapper.updateReqDeliveryStatus*/
+								<![CDATA[       
+									UPDATE NSDBAPTN.MD_PTN_11ST_DLVR_DTL
+										  SET NS_LINK_STAT_CD = #{nsLinkStatCd}
+											  , MDF_DATE        = NOW()
+									 WHERE LINK_DATE >= (CURRENT_DATE-3)
+										 AND NS_LINK_STAT_CD = #{preNsLinkStatCd}
+										 AND PTN_CD = #{ptnCd}
+								]]>
+							 </update>
+							 
+							 
+							<!-- 내부오류건 재연동 처리 - DELIVERY -->
+							<update id="updateFailedDeliveryStatus" parameterType="com.nsmall.partner.outbound.biz.st11.entity.shipping.ShippingCmpltSearchVo">
+								 /*com.nsmall.partner.outbound.biz.st11.dao.tx.ShippingCmpltSt11TxMapper.updateFailedDeliveryStatus*/
+								<![CDATA[       
+									UPDATE NSDBAPTN.MD_PTN_11ST_DLVR_DTL
+										  SET NS_LINK_STAT_CD = #{nsLinkStatCd}
+											  , MDF_DATE        = NOW()
+											  , RESULT          = NULL
+									 WHERE LINK_DATE >= (CURRENT_DATE-3)
+										AND NS_LINK_STAT_CD = '39'
+										AND RESULT LIKE 'ST11 API FAILED%'
+										AND PTN_CD = #{ptnCd}
+								]]>            
+							</update>
+							
+					1-2-2. 배송중 처리목록을 가져온다.
+						shippingCmpltSt11TxMapper 의 selectReqDeliveryList 를 조회하여 List<MdPtn11stDlvrDtlVo> 를 받는다.
+
+						1-2-2-1. 배송확정 Process
+						requestDeliveryProcess 메소드를 실행하여 ShippingCmpltApiResponseVo를 반환
+						
+							requestDeliveryProcess
+								MdPtn11stDlvrDtlVo 객체에 PreTrans11stSeq에 Trans11stSeq(), 
+								PreNsLinkStatCd에 BaseConstants.STAT_SHIP_ING
+								를 세팅
+								
+								/* 11번가 배송중처리 API Request */
+								makeDeliveryApiRequest(shippingCmpltTableVo, partnerType , "N") 를 실행하여 ShippingCmpltResponseVo 객체를 반환
+								
+										makeDeliveryApiRequest
+											RestfulApiClient 에 11번가로 설정
+											St11RequestVo 를 11번가, St11ApiType.DELIVERY_PROCESS 로 생성하고
+											PathParameter 값 세팅 
+												sendDt 
+												dlvMthdCd
+												dlvEtprsCd - etcYN 이 Y이면 00099 (해당 택배사 강제로 기타 택배로 변경 재전송여부 처리)
+												invcNo 
+												dlvNo
+												
+										11번가 ResponseVo 의 responseType이 NORMAL 인 경우,
+											shippingResponseVo = JAXBClient.unMarshallChildNode(ShippingApiResponseVo.class, responseEntity, "ResultOrder");
+											resVo.setCode(shippingResponseVo.getResultCode());
+											resVo.setMessage(shippingResponseVo.getResultText());
+										NORMAL 이외의 경우
+											St11AuthResponseVo authResponseVo = JAXBClient.unMarshall(St11AuthResponseVo.class, responseEntity, true);
+											resVo.setCode(String.valueOf(authResponseVo.getResultCode()));
+											resVo.setMessage(authResponseVo.getResultMessage());
+											
+										resVo 반환
+									
+								반환받은 ShippingCmpltResponseVo 가 호출 성공일 경우
+								
+									중복송장 발생된 경우 기타업체(00099)로 변경 후 재전송 처리
+									
+										MdPtn11stDlvrDtlVo의 NsLinkStatCd에 BaseConstants.STAT_SHIP_CMPLT, Result 를 세팅
+											
+									송장번호가 유효하지 않거나, 사용된 송장번호인 경우
+										* result_code  -3306 (송장번호가 유효하지 않습니다.)
+										* result_code  -3320 (이미 사용된 송장번호 입니다.)
+										
+										makeDeliveryApiRequest(shippingCmpltTableVo, partnerType, "Y") 메소드 실행하여 apiReqVo 를 반환
+										기타배송 여부(etcYn)가 Y 인 대상을 조회하는 것으로 파악
+										
+										조회 성공일 경우, 
+											NsLinkStatCd 에 BaseConstants.STAT_SHIP_CMPLT,
+											Result 에 송장 재발송처리(s) message 를 세팅
+										조회 실패일 경우,
+											NsLinkStatCd 에 BaseConstants.STAT_SHIP_FAIL,
+											Result 에 송장 재발송처리(F) message 를 세팅
+										
+									이외의 경우
+										NsLinkStatCd 에 BaseConstants.STAT_SHIP_FAIL,
+										Result 에 apiReqVo 코드와 메세지를 담는다.
+											
+						
+						1-2-2-2. API 호출에 성공했을 경우,
+							MdPtn11stDlvrDtlVo 의 NsLinkStatCd() 가 BaseConstants.STAT_SHIP_CMPLT(배송완료) 이면
+								ptnOrderIntlcRequestVo 의 TrmsRsltCd 에 BaseConstants.Y 세팅
+							배송완료가 아닐 경우,
+								ptnOrderIntlcRequestVo 의 TrmsRsltCd 에 BaseConstants.N 세팅
+								
+								
+							MQ 관련 세팅 수행
+								ptnOrderIntlcRequestVo 에 세팅
+									FileSeq
+									PtnCd		- 11번가 ICode
+									IntlcApiCd	- NPTNINTLCAPICD
+									TrmsRslt	- message
+									FileCtnt	
+									OrderNum	- NS주문번호
+									OrderSeq	- 제휴사 주문 순번
+									PtnOrderNum	- 제휴사 주문 번호
+									WblNum		- 송장번호
+									BatchNm		- BATCHNM
+									
+							queueSender.send(ptnOrderIntlcRequestVo) 실행
+							
+								JMSTemplate 을 통해 큐를 send 한다. (파라미터에 MessageQueueName, 설정된 message)
+									MessageQueueType이 FIFO 일 때, message 안에 JMSXGroupID로 getMessageQueueName 을 세팅
+									
+					resVo 에 배송확정 프로세스가 완료된 이후의 결과 값을 세팅
+						
+			1-3. AK
+					OutboundTargetType이 AKMALL, AKMallBizType이 COMPLETE_SHIPPING 인 ShippingCmpltAKMallService의 requestShippingCmplt() 메소드 실행
+					
+				1-3-1.	출고 완료 처리 
+						batSipoutConfirm()
+							
+							1-3-1-2. 작업 기준일자 세팅
+								현재시간, 2일전 시간을 설정
+								
+							1-3-1-2. 출고처리 대상 식별
+								updateDeliveryConfirmTrgtFlag(sBaseDate2, BaseConstants.SALE_CNFM_CD_10)
+								
+									연동상태코드 미처리 30에서 처리중 31로 변경 수행
+									
+										ShippingCmpltSearchVo 의 NsLinkStatCd 에 BaseConstants.STAT_SHIP_ING,
+																PreLinkDate 에 2일전 날짜,
+																PreNsLinkStatCd 에 BaseConstants.STAT_SHIP_READY,
+																PreSaleCnfmCd 에 SALE_CNFM_CD_10 을 세팅 
+										
+										출고처리대상 상태값 업데이트
+											shippingCmpltAkTxMapper 의 updateShipOutConfirmTrgtFlag 쿼리를 수행
+										
+											<!-- 출고처리/배송완료 처리 상태값 업데이트 -->
+											<update id="updateShipOutConfirmTrgtFlag" parameterType="com.nsmall.partner.outbound.biz.akmall.entity.shipping.ShippingCmpltSearchVo">
+												 /*com.nsmall.partner.outbound.biz.akmall.dao.tx.ShippingCmpltAKMallTxMapper.updateShipOutConfirmTrgtFlag*/
+												<![CDATA[       
+													UPDATE NSDBAPTN.MD_PTN_AK_DLVR_DTL
+														  SET NS_LINK_STAT_CD = #{nsLinkStatCd}
+															  , MDF_DATE        = NOW()
+													 WHERE LINK_DATE >= #{preLinkDate}
+														 AND NS_LINK_STAT_CD >= #{preNsLinkStatCd}
+														 AND LINK_TRAN_DTTM = '00000000000000'
+														 AND SALE_CNFM_CD = #{preSaleCnfmCd}
+												]]>
+											 </update>
+
+										내부오류건 재연동 처리 - 배송
+											shippingCmpltAkTxMapper 의 updateFailedShipOutConfirmTrgtFlag 쿼리를 수행
+
+											<!-- 내부오류건 재연동 처리 - DELIVERY -->
+											<update id="updateFailedShipOutConfirmTrgtFlag" parameterType="com.nsmall.partner.outbound.biz.akmall.entity.shipping.ShippingCmpltSearchVo">
+												 /*com.nsmall.partner.outbound.biz.akmall.dao.tx.ShippingCmpltAKMallTxMapper.updateFailedShipOutConfirmTrgtFlag*/
+												<![CDATA[       
+													UPDATE NSDBAPTN.MD_PTN_AK_DLVR_DTL
+														  SET NS_LINK_STAT_CD  = #{nsLinkStatCd}
+															 , MDF_DATE       = NOW()
+															 , RETURN_CD      = ''
+															 , RETURN_MSG     = ''
+															 , LINK_TRAN_DTTM = '00000000000000'
+													 WHERE LINK_DATE       >= #{preLinkDate}
+														AND NS_LINK_STAT_CD  = '39'
+														AND RETURN_CD        = '-1'
+														AND SALE_CNFM_CD     = #{preSaleCnfmCd}
+														AND ORD_ID IS NOT NULL
+														AND RETURN_MSG LIKE 'AK % API FAILED %'
+												]]>            
+											</update>
+
+								PreLinkDate 에 2일전 날짜, 
+								PreNsLinkStatCd 에 BaseConstants.STAT_SHIP_ING,
+								PreSaleCnfmCd 에 BaseConstants.SALE_CNFM_CD_10 를 세팅
+
+
+							1-3-1-3. 출고처리 대상 추출
+								shippingCmpltAkTxMapper 의 selectShipOutConfirmList 쿼리로 조회 데이터 가져옴
+
+								<!-- 출고처리(10)/배송완료(20) 대상 데이터 추출 -->
+								<select id="selectShipOutConfirmList"  parameterType="com.nsmall.partner.outbound.biz.akmall.entity.shipping.ShippingCmpltSearchVo" resultType="com.nsmall.partner.outbound.biz.akmall.entity.shipping.MdPtnAkDlvrDtlVo">
+									<![CDATA[   
+										SELECT /*com.nsmall.partner.outbound.biz.akmall.dao.tx.ShippingCmpltAKMallTxMapper.selectShipOutConfirmList */
+												   LINK_DATE
+												 , NS_LINK_STAT_CD
+												 , LINK_TRAN_DTTM
+												 , SALE_CNFM_CD
+												 , EDI_GB
+												 , ORD_ID
+												 , ORD_SEQ
+												 , SALE_APPLY_DATE
+												 , AK_ORD_ID
+												 , AK_ORD_SEQ
+												 , AK_ORD_GOODS_SEQ
+												 , AK_ORD_GOODS_PROC_SEQ
+												 , DELIV_ID
+												 , WAYBILL_NO
+												 , DELIV_COMP_ID
+												 , COMPLETE_DT
+												 , COMPLETE_TIME
+												 , DELIV_MEMO
+												 , RETURN_CD
+												 , RETURN_MSG
+												 , ETR_ID
+												 , ETR_DATE
+												 , MDF_ID
+												 , MDF_DATE
+										 FROM NSDBAPTN.MD_PTN_AK_DLVR_DTL
+										WHERE LINK_DATE         >= #{preLinkDate}
+										   AND NS_LINK_STAT_CD   = #{preNsLinkStatCd}
+										   AND LINK_TRAN_DTTM    = '00000000000000'
+										   AND SALE_CNFM_CD      = #{preSaleCnfmCd}
+									]]>          
+								</select> 
+
+								조회해온 데이터를 출고처리하는 requestBatSipoutConfirm() 수행
+
+									AK 출고처리 API를 호출한다. 
+										makeDeliveryConfirmApiRequest 수행
+
+										AKMALL 타입의 RestfulApiClient 를 세팅하고 
+										타겟 데이터의 SaleCnfmCd() 가 BaseConstants.SALE_CNFM_CD_10 인 경우,
+											AKMallRequestVo 를 AKMallApiType.SHIPOUT_CONFIRM (출고처리) 타입으로 설정
+										
+						
+			1-4. G마켓, AUCTION
+					OutboundTargetType이 EBAY, EbayBizType이 COMPLETE_SHIPPING 인 ShippingCmpltEbayService의 requestShippingCmplt(partnerName) 메소드 실행
+			1-5. TMON, TMON_ETV
+					OutboundTargetType이 TMON, TmonBizType이 ENROLL_INVOICE 인 ShippingCmpltTmonService의 requestShippingCmplt(partnerName) 메소드 실행
+			1-6. INTERPARK, INTERPARK_ETV
+					OutboundTargetType이 INTERPARK, InterparkBizType이 SHIPPING_START 인 ShippingCmpltInterparkService의 requestShippingCmplt(partnerName) 메소드 실행
+			1-7. 네이버
+					OutboundTargetType이 NAVER, NaverBizType이 COMPLETE_SHIPPING 인 ShippingCmpltNaverService의 requestShippingCmplt(partnerName) 메소드 실행
+					
+				1-7-1. 	ShippingCmpltNaverService 의 requestShippingCmplt 메소드
+				
+							CommonBizConstants.java 파일의 
+								- PartnerType 에 있는 NAVER 관련 코드값 세팅 필요
+								- NaverApiType 에 사용할 관련 값 필요시 세팅 필요
+							
+							// 계정별 로직 수행
+							processShippingCmplt() 메소드 실행
+							
+						1-7-1-1.	작업중으로 상태 변경
+										MdPtnNaverDlvrDtlVo 를 생성하고 
+											PreNsLinkStatCd 에 BatchConstants.NS_LINK_STAT_CD_30(연동상태코드 미처리),
+											NsLinkStatCd 에 BatchConstants.NS_LINK_STAT_CD_31(연동상태코드 처리중),
+											PtnCd 를 세팅하고 
+											
+											shippingCmpltNaverService 의 updateReqDeliveryStatus(dlvrUpdtVo) 쿼리 실행
+												
+												// 작업중 상태변경
+												shippingCmpltNaverTxMapper 의 	
+													updateReqDeliveryStatus(dlvrUpdtVo) 쿼리 실행
+													
+														<!-- 배송중 처리 전 작업중으로 상태변경 -->
+														<update id="updateReqDeliveryStatus" parameterType="com.nsmall.partner.outbound.biz.naver.entity.shipping.MdPtnNaverDlvrDtlVo">
+															 /*com.nsmall.partner.outbound.biz.naver.dao.tx.ShippingCmpltNaverTxMapper.updateReqDeliveryStatus*/
+															<![CDATA[       
+																UPDATE NSDBAPTN.MD_PTN_NAVER_DLVR_DTL
+																	  SET NS_LINK_STAT_CD = #{nsLinkStatCd}
+																		  , FINAL_RVIS_DTTM = NOW()
+																 WHERE LINK_DATE >= TO_CHAR((CURRENT_DATE-3),'YYYYMMDD')
+																	 AND NS_LINK_STAT_CD = #{preNsLinkStatCd}
+																	 AND PTN_CD = #{ptnCd}
+															]]>
+														 </update>
+														 
+														 
+													updateFailedDeliveryStatus(dlvrUpdtVo) 쿼리 실행
+													
+														<!-- 내부오류건 재연동 처리 - DELIVERY -->
+														<update id="updateFailedDeliveryStatus" parameterType="com.nsmall.partner.outbound.biz.naver.entity.shipping.MdPtnNaverDlvrDtlVo">
+															 /*com.nsmall.partner.outbound.biz.naver.dao.tx.ShippingCmpltNaverTxMapper.updateFailedDeliveryStatus*/
+															<![CDATA[       
+																UPDATE NSDBAPTN.MD_PTN_NAVER_DLVR_DTL
+																	  SET NS_LINK_STAT_CD = #{nsLinkStatCd}
+																		  , FINAL_RVIS_DTTM = NOW()
+																		  , RESULT_CODE = ''
+																		  , RESULT_MESSAGE = ''
+																 WHERE LINK_DATE >= TO_CHAR((CURRENT_DATE-3),'YYYYMMDD')
+																	AND NS_LINK_STAT_CD = '39'
+																	AND (RESULT_MESSAGE LIKE '%API FAILED%'
+																			OR RESULT_MESSAGE LIKE '%사용자%로그인%')
+																	AND PTN_CD = #{ptnCd}
+															]]>            
+														</update>
+							
+						1-7-1-2.	배송중 처리목록을 가져온다.
+										shippingCmpltNaverTxMapper 의 selectReqDeliveryList(dlvrUpdtVo) 쿼리로 배송중 목록 조회
+										
+										<!-- 배송중 처리 대상 데이터 가져오기 -->
+										<select id="selectReqDeliveryList"  parameterType="com.nsmall.partner.outbound.biz.naver.entity.shipping.MdPtnNaverDlvrDtlVo" resultType="com.nsmall.partner.outbound.biz.naver.entity.shipping.MdPtnNaverDlvrDtlVo">
+											<![CDATA[   
+												SELECT /*com.nsmall.partner.outbound.biz.naver.dao.tx.ShippingCmpltNaverTxMapper.selectReqDeliveryList*/
+														  LINK_DATE
+														, DLVR_NAVER_SEQ
+														, PRODUCT_ORDER_ID
+														, DELIVERY_METHOD_CODE
+														, DELIVERY_COMPANY_CODE
+														, TRACKING_NUMBER
+														, DISPATCH_DATE
+														, BARCODE_NO_LIST
+														, E_COUPON_NO
+														, ORD_ID
+														, ORD_SEQ
+														, PTN_CD
+														, RESULT_CODE
+														, RESULT_MESSAGE
+														, NS_LINK_STAT_CD
+														, LINK_TRAN_DTTM
+														, INIT_REGI_PIC
+														, INIT_REGI_DTTM
+														, FINAL_RVIS_PIC
+														, FINAL_RVIS_DTTM
+												 FROM NSDBAPTN.MD_PTN_NAVER_DLVR_DTL
+												WHERE LINK_DATE >= TO_CHAR((CURRENT_DATE-3),'YYYYMMDD')
+												   AND NS_LINK_STAT_CD  = #{nsLinkStatCd}
+												   AND PTN_CD = #{ptnCd}
+												ORDER BY LINK_DATE
+															 , DLVR_NAVER_SEQ
+											]]>          
+										</select>
+										
+										조회해온 데이터로 requestBatShippingComplete(tableResVo, partnerType) 배치 API를 호출한다.
+										
+											makeDeliveryConfirmApiRequest(tableResVo, partnerType) 를 수행하여 ShippingCmpltApiVo 를 설정
+												RestfulServiceType.EBAY 인 apiClientAdapter RestfulApiClient 를 설정 (EBAY와 유사하여 EBAY 유형으로 처리)
+												
+												** TODO-JS: API 송신 및 결과값 반환에 대한 코드는 작성해야 함
+												
+												ShipProductOrder API 호출 
+												
+										API 호출 성공여부에 따라 API 송신 결과 코드를 세팅
+										
+										MQ 관련 
+											PtnOrderIntlcRequestVo 를 생성 후 값 세팅
+												- TrmsRsltCd  :		Y/N
+												- PtnCd  	  :		PartnerType.NAVER.getICode() 
+												- IntlcApiCd  :		INTLC_API_CD
+												- FileSeq	  :		RequestContextHelper.getRequestTraceString()
+												- TrmsRslt	  : 	message
+												- FileCtnt	  : 	JSonUtil.convertObjectToJson(tableResVo)
+												- OrderNum	  :		NS주문번호
+												- OrderSeq	  : 	제휴사 주문 순번
+												- PtnOrderNum : 	제휴사 주문 번호
+												- WblNum	  : 	송장번호
+												- BatchNm	  : 	BATCHNM
+											
+											queueSender.send(ptnOrderIntlcRequestVo) 실행	
+						
+								처리가 끝난 결과값을 반환 (ShippingCmpltApiResponseVo)
+									MdPtnNaverDlvrDtlVo 를 생성 후 세팅
+										- PtnCd
+										- PreNsLinkStatCd	  : 	BatchConstants.NS_LINK_STAT_CD_31 (연동 처리중)
+										- NsLinkStatCd		  :		성공 시 BaseConstants.STAT_SHIP_CMPLT
+																	실패 시 BaseConstants.STAT_SHIP_FAIL
+										- ResultCode
+										- ResultMessage
+										- DlvrNaverSeq
+								
+						1-7-1-3.	최종 상태값 업데이트
+										shippingCmpltNaverService 의 updateReqDeliveryLinkStatus(dlvrResultVo) 실행
+										
+											결과 업데이트
+											shippingCmpltNaverTxMapper 의 updateReqDeliveryLinkStatus(dlvrResultVo) 쿼리 실행
+											
+											<!-- 배송중 처리 처리결과 업데이트 -->     
+											<update id="updateReqDeliveryLinkStatus" parameterType="com.nsmall.partner.outbound.biz.naver.entity.shipping.MdPtnNaverDlvrDtlVo">
+												/*com.nsmall.partner.outbound.biz.naver.dao.tx.ShippingCmpltNaverTxMapper.updateReqDeliveryLinkStatus*/
+												<![CDATA[
+													UPDATE NSDBAPTN.MD_PTN_NAVER_DLVR_DTL
+														  SET RESULT_CODE = #{resultCode}
+															  , RESULT_MESSAGE = #{resultMessage}
+															  , NS_LINK_STAT_CD = #{nsLinkStatCd}
+															  , FINAL_RVIS_DTTM = NOW()
+													 WHERE LINK_DATE >= TO_CHAR((CURRENT_DATE-3),'YYYYMMDD')
+														AND DLVR_NAVER_SEQ  = #{dlvrNaverSeq}
+														AND NS_LINK_STAT_CD = #{preNsLinkStatCd}
+														AND PTN_CD = #{ptnCd}
+												 ]]> 
+											</update>
+											
+			
+		2. 제휴사 별 메소드 실행 결과로 얻어진 responseVo를 ApiResponseVo의 body에 세팅 후 Response를 build 하여 반환
+	
+	
+	
+	Naver API 관련
+		ShipProductOrder - 특정 상품 주문을 발송 처리한다.
+		
+		Request Message
+			<ShipProductOrderRequest>
+				<AccessCredentials> AccessCredentialsType
+					<AccessLicense> string </AccessLicense>
+					<Timestamp> dateTime </Timestamp>
+					<Signature> string </Signature>
+				</AccessCredentials>
+				<RequestID> string </RequestID>
+				<DetailLevel> string </DetailLevel>
+				<Version> string </Version>
+				<ProductOrderID> string </ProductOrderID>
+				<DeliveryMethodCode> code </DeliveryMethodCode>
+				<DeliveryCompanyCode> string </DeliveryCompanyCode>
+				<TrackingNumber> string </TrackingNumber>
+				<DispatchDate> dateTime </DispatchDate>
+				<BarcodeNoList> string[] </BarcodeNoList>
+				<ECouponNo> dateTime </ECouponNo>
+			</ShipProductOrderRequest>
+			
+			
+		필드 구성
+			필드명 					타입 						필수 여부 			설명
+									BaseCheckoutRequest 	필수 				기본 요청 메시지 구조체
+			ProductOrderID 			string 					필수 				상품 주문 번호
+			DeliveryMethodCode 		code 					필수 				배송 방법 코드("A.2.9 배송 방법 코드" 참고)
+			DeliveryCompanyCode 	string 					선택 				택배사 코드("A.2.10 택배사 코드" 참고)
+			TrackingNumber 			string 					선택 				송장 번호
+			DispatchDate 			dateTime 				필수 				배송일
+			BarcodeNoList 			string[] 				선택 				바코드 번호
+			ECouponNo 				string 					선택 				E 쿠폰 번호
+			
+			
+		BaseCheckoutRequest의 데이터
+			1. AccessCredentials
+				1) AccessLicense	- string
+				2) Timestamp		- dateTime
+				3) Signature		- string
+			2. RequestID		- string
+			3. DetailLevel		- string
+			4. Version			- string
+			
+			
+			BaseRequest
+				BaseRequest는 네이버 플랫폼 서비스 시스템에서 정의한 표준 SOAP(Simple Object Access Protocol) 메시지 구조체로, 
+				요청 API의 가장 기본적인 정보로 구성된다. 스마트스토어 API는 BaseRequest를 확장한 구조체를 사용한다.
+				<BaseRequest>
+					<AccessCredentials> AccessCredentialsType
+					<AccessLicense> string </AccessLicense>
+					<Timestamp> dateTime </Timestamp>
+					<Signature> string </Signature>
+					</AccessCredentials>
+					<RequestID> string </RequestID>
+				</BaseRequest>
+				
+				BaseRequest의 필드
+				필드명 					타입 							필수 여부 		설명
+				AccessCredentials 		AccessCredentialsType 		필수 			인증 및 권한 확인을 위해 요청 메시지에 반드시 첨부되어야 한다.
+				RequestID 				string 						선택 			메시지를 식별하기 위한 아이디로, 필요에 따라 사용한다. 사용하면 동일한 필드 값이 
+																				응답 메시지에도 포함된다.
+																				영문 및 숫자로 구성하며, 최대 64 글자를 입력할 수 있다.
+			
+		인터파크와 가장 유사할 것!!
+		
+		쿠폰 번호의 경우, 정은영 과장님과의 협의를 통해 사용여부를 논의해야 할 필요가 있다.
+		
+		
+		Response Message
+		
+			<ShipProductOrderResponse>
+				<RequestID> string </RequestID>
+				<ResponseType> string </ResponseType>
+				<ResponseTime> int </ResponseTime>
+				<Error> ErrorType </Error>
+				<WarningList> ErrorType[] </WarningList>
+				<DetailLevel> string </DetailLevel>
+				<Version> string </Version>
+				<Release> string </Release>
+				<Timestamp> dateTime </Timestamp>
+				<MessageID> string </MessageID>
+			</ShipProductOrderResponse>
+			
+			
+		필드명 		타입 						필수 			여부 설명
+					BaseCheckoutResponse 	필수 			기본 응답 메시지 구조체
+					
+					
+					
+		BaseResponse
+		
+			BaseResponse는 네이버 플랫폼 서비스 시스템에서 정의한 표준 SOAP(Simple Object Access Protocol) 메시지 구조체, 응답 API의 가장 기본적인 정보로 구성된다. 
+			스마트스토어 API는 BaseResponse를 확장한 구조체를 사용한다.
+			
+			<BaseResponse>
+				<RequestID> string </RequestID>
+				<ResponseType> string </ResponseType>
+				<ResponseTime> long </ResponseTime>
+				<Error> ErrorType </Error>
+				<WarningList> ErrorType[] </WarningList>
+				<QuotaStatus> QuotaStatusType </QuotaStatus>
+			</BaseResponse>
+			
+			필드명 			타입 					필수 		여부 설명
+			RequestID 		string 				선택 		메시지를 식별하기 위한 아이디로, 요청 메시지의 RequestID 필드 값과 동일한 값을 갖는다.
+			ResponseType 	string 				필수 		호출한 API 의 성공 여부(Success/SuccessWarning/Error/Error-Warning) ResponseTime long 필수 요청 처리 시간을 표시한다. 
+														요청 메시지를 받은 순간부터 응답 메시지를 보내는 순간까지의 시간을 밀리초(millisecond) 단위로 반환한다.
+			Error 			ErrorType 			선택 		오류(error) 정보
+			WarningList 	ErrorType[] 		선택 		경고(warning) 정보 목록
+			QuotaStatus 	QuotaStatusType 	선택 		쿼터 잔량과 만료 일시
+			
+		BaseProductResponseType
+		
+			BaseResponse를 확장한 형태로, 인증 정보 등 공통적인 정보를 포함한다. 네이버 상품 API의 모든 요청 메시지는 BaseProductResponseType을 확장한 형태이다. 
+			
+			<BaseProductResponse> BaseProductResponseType
+			<RequestID> string </RequestID>
+				<ResponseType> string </ResponseType>
+				<ResponseTime> long </ResponseTime>
+				<Error> ErrorType </Error>
+				<WarningList>
+					<Warning> ErrorType </Warning> [*]
+				</WarningList>
+				<Version> string </Version>
+				<Timestamp> dateTime </Timestamp>
+			</BaseProductResponse>
+			
+		
+			필드명 			타입 					필수 		여부 설명
+			Version 		string 				필수 		API 응답 메시지 버전(2.0)
+			Timestamp 		dateTime 			필수 		메시지 호출 당시 서버 시각
+
+	
+	
+		
+		DeliveryType
+		
+			DeliveryType은 배송 방식 및 배송비 등을 설정할 수 있다. DeliveryType을 입력하지 않는 경우에는 배송 없는 상품으로 등록된다.
+	
+			DeliveryType
+				<Type> string </Type>
+				<BundleGroupAvailable> string </BundleGroupAvailable>
+				<BundleGroupId> long </BundleGroupId>
+				<VisitAddressId> long </VisitAddressId>
+				<QuickServiceAreaList>
+					<QuickServiceAreaCode> string </QuickServiceAreaCode> [*]
+				</QuickServiceAreaList>
+				<FeeType> string </FeeType>
+				<BaseFee> int </BaseFee>
+				<FreeConditionalAmount> int </FreeConditionalAmount>
+				<RepeatQuantity> int </RepeatQuantity>
+				<SecondBaseQuantity> int </SecondBaseQuantity>
+				<SecondExtraFee> int </SecondExtraFee>
+				<ThirdBaseQuantity> int </ThirdBaseQuantity>
+				<ThirdExtraFee> int </ThirdExtraFee>
+				<PayType> string </PayType>
+				<AreaType> string </AreaType>
+				<Area2ExtraFee> int </Area2ExtraFee>
+				<Area3ExtraFee> int </Area3ExtraFee>
+				<ReturnDeliveryCompanyPriority> string </ReturnDeliveryCompanyPriority>
+				<ReturnFee> int </ReturnFee>
+				<ExchangeFee> int </ExchangeFee>
+				<ShippingAddressId> long </ShippingAddressId>
+				<ReturnAddressId> long </ReturnAddressId>
+				<DifferentialFee> string </DifferentialFee>
+				<InstallationFee> string </InstallationFee>
+				<IndividualCustomUniqueCode> string </IndividualCustomUniqueCode>
+				<AttributeType> string </AttributeType>
+				<ExpectedDeliveryPeriodType> string </ExpectedDeliveryPeriodType>
+				<ExpectedDeliveryPeriodDirectInput> string </ExpectedDeliveryPeriodDirectInput>
+				<TodayStockQuantity> int </TodayStockQuantity>
+				<CustomProductAfterOrderYn> string </CustomProductAfterOrderYn>
+				<HopeDeliveryGroupUsable> string </HopeDeliveryGroupUsable>
+				<HopeDeliveryGroupId> long </HopeDeliveryGroupId>
+	
+		
+		
+			필드명 							타입 				필수 		수정 		설명
+			Type 							string 			필수 		가능 		배송 방법 
+																			 - 관련 코드: 배송 방법 유형 코드
+			BundleGroupAvailable 			string 			필수 		가능 		묶음 배송 가능 여부
+																			 “Y” 또는 “N”
+																			 묶음 배송 그룹 코드가 존재할 경우 자동으로 “Y”로 설정된다.
+			BundleGroupId 					long 			선택 		가능 		묶음 배송 그룹 코드
+ 																			 - 관련 API: ManageBundleGroup, GetBundleGroupList
+																			묶음 배송 가능이 “Y” 이고 묶음 배송 그룹코드가 Null 이면 기본 그룹으로 저장된다.
+			VisitAddressId 					long 			선택 		가능 		방문 수령 주소 코드
+ 																			 - 관련 API: GetAddressBookList
+			QuickServiceAreaList 			string[] 		선택 		가능 		퀵서비스 배송 지역 코드 목록
+ 																			 - 관련 코드: 퀵서비스 배송 지역 코드
+			FeeType 						string 			필수 		가능 		배송비 유형
+ 																			 - 관련 코드: 배송비 유형 코드
+			BaseFee 						int 			필수 		가능 		기본 배송비
+			FreeConditionalAmount 			int 			선택 		가능 		무료 조건 금액
+																			 배송비 유형이 ‘조건부 무료’일 경우 입력한다.
+			RepeatQuantity 					int 			선택 		가능 		반복 수량
+																			 배송비 유형이 ‘수량별 부과 - 반복구간’일 경우 입력한다.
+			SecondBaseQuantity 				int 			선택 		가능 		2 구간 최소 수량
+																			 배송비 유형이 ‘수량별 부과 - 구간직접설정’ 일 경우 입력한다.
+			SecondExtraFee 					int 			선택 		가능 		2 구간 추가 배송비
+																			 배송비 유형이 ‘수량별 부과 - 구간직접설정’ 일 경우 입력한다.
+			ThirdBaseQuantity 				int 			선택 		가능 		3 구간 최소 수량
+																			 배송비 유형이 ‘수량별 부과 - 구간직접설정’ 일 경우 입력한다.
+			ThirdExtraFee 					int 			선택 		가능 		3 구간 추가 배송비 
+																			 배송비 유형이 ‘수량별 부과 - 구간직접설정’ 일 경우 입력한다.
+			PayType 						string 			선택 		가능 		배송비 결제 방식
+ 																			 - 관련 코드: 배송비 결제 방식 타입 코드
+			AreaType 						string 			선택 		가능 		지역별 추가 배송 권역
+ 																			 - 관련 코드: 배송비 권역 타입 코드
+																			 묶음 배송 가능이 “Y”인 경우에는 해당 값은 무시된다.
+			Area2ExtraFee 					int 			선택 		가능 		2 권역 배송비
+																			 묶음 배송 가능이 “Y”인 경우에는 해당 값은 무시된다.
+			Area3ExtraFee 					int 			선택 		가능 		3 권역 배송비
+																			 묶음 배송 가능이 “Y”인 경우에는 해당 값은 무시된다.
+			ReturnDeliveryCompanyPriority 	string 			필수 		가능 		반품/교환 택배사
+ 																			 - 관련 코드: 반품/교환 택배사 타입 코드
+ 																			 - 관련 API: GetReturnsCompanyList
+			ReturnFee 						int 			필수 		가능 		반품 배송비
+			ExchangeFee 					int 			필수 		가능 		교환 배송비
+			ShippingAddressId 				long 			선택 		가능 		출고지 주소 번호
+ 																			 - 관련 API: GetAddressBookList
+			ReturnAddressId 				long 			선택 		가능 		반품/교환지 주소 번호
+ 																			 - 관련 API: GetAddressBookList
+			DifferentialFee 				string 			선택 		가능 		지역별 차등 배송비 정보
+			InstallationFee 				string 			선택 		가능 		별도 설치비 유무
+																			 “Y” 또는 “N”
+			IndividualCustomUniqueCode 		string 			선택 		가능 		개인통관고유부호 수집 여부
+																			 “Y” 또는 “N” 
+																			 미입력 시 “Y”로 저장된다. 이 필드는 deprecated 될 예정이다.
+			AttributeType 					string 			선택 		가능 		배송 속성 타입 코드
+ 																			 - 관련 코드: 배송 속성 타입 코드
+			ExpectedDeliveryPeriodType 		string 			선택 		가능 		발송 예정일 타입 코드
+ 																			 - 관련 코드: 주문 제작 상품 발송 예정일 타입 코드
+			ExpectedDeliveryPeriodDirectInput	string 		선택 		가능 		발송 예정일 직접 입력값
+			TodayStockQuantity 				int 			선택 		가능 		오늘 출발 상품 재고 수량
+			CustomProductAfterOrderYn 		string 			선택 		가능 		주문 확인 후 제작 상품 여부
+																			 “Y” 또는 “N”
+																			 ProductType 의 CustomMade 대신 사용되는 필드
+			HopeDeliveryGroupUsable 		string 			선택 		가능 		희망일 배송 가능 여부
+																			 “Y” 또는 “N”
+			HopeDeliveryGroupId 			long 			선택 		가능 		희망일 배송 그룹 코드
+ 																			 - 관련 API: ManageHopeDeliveryGroup,
+																					    GetHopeDeliveryGroup,
+																						GetHopeDeliveryGroupList
+																			 희망일 배송 가능 여부가 “Y” 이고 희망일 배송 그룹 코드가 Null 이면 기본 그룹으로 저장된다.
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
